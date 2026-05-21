@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-mcp"
+version = "0.1.0"
+description = "Local agentic orchestrator (Gemma 4 / Qwen 2.5 / Gemma 3) over the six aircraft-analysis MCPs."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [
+  { name = "The Design Research Collective", email = "ask-drc@cmu.edu" },
+]
+maintainers = [
+  { name = "Mayank Dixit", email = "mayankd@andrew.cmu.edu" },
+  { name = "Christopher McComb", email = "ccm@cmu.edu" },
+]
+keywords = ["mcp", "agent", "llm", "gemma", "qwen", "aerospace", "cpacs"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+  "ollama>=0.4",
+]
+
+[project.optional-dependencies]
+multimodal = ["pyvista>=0.43", "pillow>=10"]
+bench = ["agentic-bench>=0.1"]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[project.urls]
+Homepage = "https://github.com/cmudrc/agent-mcp"
+Issues   = "https://github.com/cmudrc/agent-mcp/issues"
+
+# Top-level scripts only -- no installable package, since gemma_agent.py
+# is launched directly with its own venv-respawn logic.
+[tool.setuptools]
+py-modules = ["gemma_agent", "gemma_agent_v2"]
