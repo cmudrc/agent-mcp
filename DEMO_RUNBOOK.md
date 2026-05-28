@@ -120,19 +120,32 @@ verification layer for free."*
 
 ```bash
 cd agentic-bench
-cat reports/hybrid_combined.json        | jq '.aggregate'
-cat reports/qwen2_5_7b_combined.json    | jq '.aggregate'
-cat reports/gemma4_e4b_multimodal.json  | jq '.aggregate'
+cat reports/hybrid_combined_FIXED.json       | jq '.aggregate'
+cat reports/qwen2_5_7b_combined.json         | jq '.aggregate'
+cat reports/gemma4_e4b_multimodal_FIXED.json | jq '.aggregate'
 cd ..
 ```
 
 Show three numbers:
-- **Hybrid combined loss: 0.082** (the new headline)
-- **Solo Qwen combined loss: 0.165** (the previous default)
-- **Gemma 4 multimodal alone: 0.000 loss** (3/3 on the visual suite)
+- **Hybrid combined loss: 0.165**, multimodal = 0.67 *grounded* in
+  the actual surface render.
+- **Solo Qwen combined loss: 0.165**, multimodal = 0.67 but *blind*
+  (Qwen 2.5 has no vision — lucky guess on 2/3).
+- **Gemma 4 multimodal alone: 0.333**, image-grounded; gets the
+  laptop preset wrong because the corrected surface looks clean.
 
-Talk track: *"This is reproducible. Anyone can pull
-`cmudrc/agentic-bench` and reproduce these numbers on their machine."*
+Talk track: *"On the headline number the hybrid and solo Qwen tie at
+0.165. The reason we still ship hybrid is that every multimodal
+verdict is grounded in the actual aircraft picture. Solo Qwen is
+guessing 'acceptable' on every image and getting lucky two times out
+of three on this small suite — that's not a property that scales to
+images we haven't seen before."*
+
+> If asked: an earlier cut of this benchmark reported hybrid at
+> 0.082 / multimodal 1.00. That was a rendering bug — the seeker
+> was looking at the SU2 farfield box rather than the aircraft.
+> Fixed and re-benched 2026-05-28. The reports above are the
+> post-fix `_FIXED.json` files.
 
 ---
 

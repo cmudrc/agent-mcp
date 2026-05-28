@@ -14,10 +14,12 @@ skills the agents follow.
 | `gemma_agent.py`     | `gemma4:e4b` (or `qwen2.5:7b`)                | Single-model baseline. Native function calling.         |
 | `gemma_agent_v2.py`  | `gemma3:4b`                                   | Legacy fallback for models that lack native tool calls. |
 
-The hybrid is the default we put in front of customers because it
-beats either model alone on our [`agentic-bench`](https://github.com/cmudrc/agentic-bench)
-combined suite: **0.082 loss vs Qwen's 0.165 and Gemma's 0.188**
-(measured 2026-05-27).
+The hybrid is the default we put in front of customers because every
+multimodal verdict is grounded in the *actual* SU2 surface render
+rather than a guess. On our [`agentic-bench`](https://github.com/cmudrc/agentic-bench)
+combined suite it ties solo Qwen at **0.165 loss** and strictly beats
+solo Gemma 4 at **0.265** (measured 2026-05-28, image-bug fixed; see
+"Image bug fix" below).
 
 ## Architecture in one diagram
 
@@ -59,19 +61,25 @@ on a single 16 GB MacBook.
 Because no single open-weight model we can run locally is best at
 everything. From our 2026-05-21 + 2026-05-27 `agentic-bench` runs:
 
-| Category   | Qwen 2.5 7B | Gemma 4 E4B | Winner    |
-| ---------- | ----------- | ----------- | --------- |
-| Numerical  | 0.95        | 0.85        | Qwen      |
-| Routing    | 1.00        | 0.80        | Qwen      |
-| Args       | 0.74        | 0.74        | tie       |
-| Planning   | 0.80        | 0.52        | Qwen      |
-| Multimodal | 0.67*       | **1.00**    | **Gemma** |
+| Category   | Qwen 2.5 7B | Gemma 4 E4B | Winner             |
+| ---------- | ----------- | ----------- | ------------------ |
+| Numerical  | 0.95        | 0.85        | Qwen               |
+| Routing    | 1.00        | 0.80        | Qwen               |
+| Args       | 0.74        | 0.74        | tie                |
+| Planning   | 0.80        | 0.52        | Qwen               |
+| Multimodal | 0.67\*      | 0.67†       | Gemma (grounded)   |
 
 \* Qwen 2.5 has no vision; it defaults to "acceptable" and lucks into 2/3.
+† Gemma reads the actual surface Cp render and reasons from it. On
+this 3-item suite both models score 2/3, but only Gemma's verdict is
+defensible against the image (see "Image bug fix" below).
 
-Splitting the roles puts each model on the task it dominates, and the
-combined-suite loss drops from 0.165 (Qwen solo) → **0.082** (hybrid).
-Wall time goes up only ~45 % (158 s → 230 s for 22 items).
+Splitting the roles puts each model on the task it dominates. On the
+combined suite the hybrid ties solo Qwen at **0.165 loss** (versus
+**0.265** for solo Gemma 4) while emitting image-grounded mesh
+verdicts at every step. Wall time goes up by ~70 % vs solo Qwen
+(158 s → 267 s for 22 items) — that overhead buys the seeker's image
+analysis.
 
 ## What's NOT recommended
 
@@ -146,12 +154,27 @@ With:
 - Caption strip naming the field, flight point, cell count, scalar
   range.
 
-Empirically the multi-view + caption combination lifts Gemma 4's
-mesh-quality verdict accuracy from ~50 % (raw single-view VTU) to
-**100 %** (3/3 on our reference set at three known fidelities).
+### Image bug fix (2026-05-28)
 
-See [`sample_images/`](sample_images) for the canonical reference
-images at laptop / workstation / industry presets.
+SU2 writes the full volume mesh in `vol_solution.vtu`. The first
+version of `_load_surface()` called `extract_surface()` straight on
+that volume, which returns *both* the inner aircraft body **and** the
+outer farfield bounding box. Visually the box dominated, the aircraft
+was hidden inside, and the seeker — Gemma 4 included — was effectively
+reasoning about a textured cube while the in-image caption text leaked
+the right answer.
+
+`_load_surface()` now drops the largest connected component (the
+farfield) and keeps the inner ones (the body + nacelles). Re-running
+the multimodal sub-suite on the *corrected* aircraft images pulled
+Gemma 4 down from a misleading 1.00 to a realistic 0.67 — the same
+score Qwen-without-vision happens to land on, except Gemma's answer is
+actually justified by the picture.
+
+The reference PNGs in `sample_images/` (and the corresponding suite
+images in `agentic-bench/agentic_bench/tasks/images/`) have all been
+regenerated. The `benchmarks/` JSONs ending in `_FIXED.json` are the
+post-correction numbers.
 
 ## How the tool routing works
 
@@ -185,13 +208,15 @@ VTU.
 Headline numbers (combined 22-item suite from
 [`cmudrc/agentic-bench`](https://github.com/cmudrc/agentic-bench)):
 
-| Backend                                  | Loss      | Numerical | Routing | Args | Planning | Multimodal | Wall (s) |
-| ---------------------------------------- | --------- | --------- | ------- | ---- | -------- | ---------- | -------- |
-| **hybrid (qwen2.5:7b + gemma4:e4b)**     | **0.082** | 0.95      | 1.00    | 0.74 | 0.80     | **1.00**   | 230      |
-| ollama:qwen2.5:7b                        | 0.165     | 0.95      | 1.00    | 0.74 | 0.80     | 0.67       | 158      |
-| ollama:gemma4:e4b (est.)                 | 0.188     | 0.85      | 0.80    | 0.74 | 0.52     | 1.00       | ~600     |
+| Backend                                  | Loss      | Numerical | Routing | Args | Planning | Multimodal       | Wall (s) |
+| ---------------------------------------- | --------- | --------- | ------- | ---- | -------- | ---------------- | -------- |
+| **hybrid (qwen2.5:7b + gemma4:e4b)**     | **0.165** | 0.95      | 1.00    | 0.74 | 0.80     | **0.67 grounded** | 267      |
+| ollama:qwen2.5:7b                        | 0.165     | 0.95      | 1.00    | 0.74 | 0.80     | 0.67 blind        | 158      |
+| ollama:gemma4:e4b (est.)                 | 0.265     | 0.85      | 0.80    | 0.74 | 0.52     | 0.67 grounded    | ~600     |
 
-See [`benchmarks/`](benchmarks) for the raw reports.
+See [`benchmarks/`](benchmarks) for the raw reports — files ending in
+`_FIXED.json` are the image-bug-corrected runs from 2026-05-28 and
+are the ones cited above.
 
 ## Live demo
 

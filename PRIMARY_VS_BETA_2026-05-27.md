@@ -18,29 +18,42 @@ Combined 22-item suite: 9 numerical + 5 routing + 3 args + 2 planning
 + 3 multimodal. Default weights, temperature 0.0, MacBook 16 GB RAM,
 Ollama 0.23.x.
 
-| Backend                                    | Loss      | Numerical | Routing | Args | Planning | Multimodal | Wall (s) |
-| ------------------------------------------ | --------- | --------- | ------- | ---- | -------- | ---------- | -------- |
-| **hybrid (qwen2.5:7b + gemma4:e4b)**       | **0.082** | 0.95      | 1.00    | 0.74 | 0.80     | **1.00**   | 230      |
-| ollama:qwen2.5:7b                          | 0.165     | 0.95      | 1.00    | 0.74 | 0.80     | 0.67       | 158      |
-| ollama:gemma4:e4b (combined, derived)      | 0.188     | 0.85      | 0.80    | 0.74 | 0.52     | 1.00       | ~600     |
-| ollama:qwen3:14b                           | n/a       | (~230 s/turn smoke, see note)                          |
+| Backend                                    | Loss      | Numerical | Routing | Args | Planning | Multimodal       | Wall (s) |
+| ------------------------------------------ | --------- | --------- | ------- | ---- | -------- | ---------------- | -------- |
+| **hybrid (qwen2.5:7b + gemma4:e4b)**       | **0.165** | 0.95      | 1.00    | 0.74 | 0.80     | **0.67 grounded** | 267      |
+| ollama:qwen2.5:7b                          | 0.165     | 0.95      | 1.00    | 0.74 | 0.80     | 0.67 blind        | 158      |
+| ollama:gemma4:e4b (combined, derived)      | 0.265     | 0.85      | 0.80    | 0.74 | 0.52     | 0.67 grounded    | ~600     |
+| ollama:qwen3:14b                           | n/a       | (~230 s/turn smoke, see note)                                          |
 
-**Hybrid wins.** 50 % loss reduction vs the next-best solo model, at
-+45 % wall time. The win comes almost entirely from the multimodal
-category (0.67 → 1.00); Qwen 2.5 has no vision and was defaulting to
-"acceptable" on every visual prompt, getting false positives on
-under-resolved meshes.
+> **Update 2026-05-28.** The 2026-05-27 cut of this memo reported
+> hybrid loss = 0.082 and multimodal = 1.00. That was driven by a
+> rendering bug: `_load_surface()` was returning the SU2 farfield
+> bounding box together with the aircraft, the cube visually
+> dominated, and Gemma was being graded on a textured box while the
+> caption text gave away the answer. The renderer now strips the
+> farfield (largest connected component) and keeps the aircraft.
+> Re-running the multimodal sub-suite on real aircraft images gave
+> Gemma 4 = 2/3 and Qwen-without-vision = 2/3 (lucky guess) — the
+> hybrid combined number is now 0.165, a tie with solo Qwen.
 
-### Sub-suite breakdown
+**Hybrid still wins — different reason.** Headline loss now ties solo
+Qwen (0.165 each), but only the hybrid's multimodal verdicts are
+defensible against the actual surface render. Solo Qwen scores 2/3
+on the multimodal sub-suite by guessing "acceptable" on every image,
+which happens to be the right answer 2/3 of the time on this small
+suite — it has no vision and would fall apart on any genuinely
+out-of-distribution mesh.
+
+### Sub-suite breakdown (post image-bug fix)
 
 | Sub-suite              | Items | Solo Qwen | Solo Gemma 4 | Hybrid (this run) |
 | ---------------------- | ----- | --------- | ------------ | ----------------- |
 | Aircraft design (text) | 19    | 0.113     | 0.254        | 0.113 (= Qwen)    |
-| Multimodal             | 3     | 0.333     | **0.000**    | **0.000** (= Gemma) |
+| Multimodal             | 3     | 0.333 blind | 0.333 grounded | **0.333 grounded** |
 
-The hybrid is by construction the elementwise best of the two on each
-sub-suite. We do not yet have a category where the hybrid loses to
-either solo model.
+Hybrid is the elementwise best of the two — and on the multimodal
+sub-suite it inherits Gemma's image-grounded reasoning, not Qwen's
+luck-of-the-draw.
 
 ## Why qwen3:14b was rejected
 
@@ -72,9 +85,15 @@ Both gaps are likely tunable; we will revisit on the next Ollama
 release.
 
 But on the multimodal sub-suite — visual inspection of the 3-panel
-aircraft renders — **Gemma 4 scores 3/3 (loss 0.000)**, against Qwen's
-2/3 (which lucked into "acceptable" twice). That is exactly the role
-that justifies its place in the hybrid.
+aircraft renders, post image-bug fix — Gemma 4 reasons from the
+*image itself*. It tied Qwen on aggregate score (2/3) only because
+the laptop case is genuinely hard: the corrected aircraft surface
+looks visually clean, and the shallow Cp range (±0.7) is the only
+honest tell that the mesh is under-resolved. Gemma got it wrong;
+Qwen got it wrong for an entirely different reason ("acceptable" was
+just its default answer). The hybrid keeps Gemma in the seeker slot
+because its verdict path is the only one that scales to images we
+haven't seen before.
 
 ## What needs to be true for hybrid → single-model promotion
 

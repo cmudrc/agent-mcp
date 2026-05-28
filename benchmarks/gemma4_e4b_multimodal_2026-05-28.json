@@ -1,0 +1,42 @@
+{
+  "adapter": "ollama:gemma4:e4b",
+  "suite": "aircraft_multimodal_v1",
+  "n_items": 3,
+  "wall_time_s": 137.4,
+  "aggregate": {
+    "per_category": {
+      "multimodal": 0.6666666666666666
+    },
+    "weights_used": {
+      "multimodal": 1.0
+    },
+    "loss": 0.33333333333333337,
+    "n_items": 3
+  },
+  "items": [
+    {
+      "task_id": "mm_laptop_under_resolved",
+      "category": "multimodal",
+      "score": 0.0,
+      "expected": "needs_finer_mesh",
+      "got": "**Assessment:** Acceptable\n\n**Justification:**\n\nThe pressure coefficient ($C_p$) distribution visible across all three v",
+      "note": ""
+    },
+    {
+      "task_id": "mm_workstation_acceptable",
+      "category": "multimodal",
+      "score": 1.0,
+      "expected": "acceptable",
+      "got": "Based on the visual evidence and the context provided, the run is **Acceptable** for a preliminary or mid-fidelity analy",
+      "note": ""
+    },
+    {
+      "task_id": "mm_industry_acceptable",
+      "category": "multimodal",
+      "score": 1.0,
+      "expected": "acceptable",
+      "got": "**Acceptable**\n\n### Review Justification:\n\nThe pressure coefficient ($C_p$) contours displayed across the three views (I",
+      "note": ""
+    }
+  ]
+}

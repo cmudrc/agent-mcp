@@ -8,10 +8,17 @@ planform / side profile) of the *surface* coloured by Cp, with an
 explicit colour bar, axis triad, and a caption strip naming the field,
 flight condition, and mesh-cell count.
 
-This is the output we hand to Gemma in the hybrid pipeline. The
-multi-view + colour bar + caption combination empirically lifts Gemma's
-mesh-quality verdict accuracy from ~50% (raw single-view VTU render)
-to >85% (this composite) on our internal multimodal task set.
+This is the output we hand to Gemma in the hybrid pipeline.
+
+Note (2026-05-28): the *aircraft-only* filter inside `_load_surface()`
+is essential. SU2 writes the full volume mesh in vol_solution.vtu, so
+the naive `extract_surface()` returns both the inner aircraft body AND
+the outer farfield bounding box. An earlier version of this renderer
+shipped without the farfield filter and effectively handed Gemma a
+textured cube; the in-image caption text was leaking the right answer
+and inflating multimodal benchmark scores. With the filter we keep
+only the inner connected component(s) and the seeker is genuinely
+looking at the aircraft.
 
 Usage:
     python render_aircraft_views.py \\
@@ -34,14 +41,45 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 def _load_surface(vtu_path: Path) -> pv.PolyData:
-    """Load a VTU and extract its outer surface."""
+    """Load an SU2 volume VTU and return ONLY the aircraft body surface.
+
+    SU2 writes the full volume mesh, so `extract_surface()` returns both
+    the inner aircraft body AND the outer farfield bounding box. Naively
+    rendering that hides the aircraft inside the farfield cube. We fix
+    this by splitting the surface into connected components and
+    discarding the single largest one (the farfield, easily ~10x the
+    aircraft's extent).
+    """
     if not vtu_path.exists():
         raise FileNotFoundError(f"VTU not found: {vtu_path}")
     grid = pv.read(str(vtu_path))
     if isinstance(grid, pv.MultiBlock):
         grid = grid.combine()
-    surf = grid.extract_surface() if hasattr(grid, "extract_surface") else grid
-    return surf
+    raw_surf = grid.extract_surface(nonlinear_subdivision=0) if hasattr(grid, "extract_surface") else grid
+
+    # If this isn't an SU2-style mesh (no farfield), connectivity might
+    # still return 1 region; in that case return as-is.
+    labeled = raw_surf.connectivity()
+    if "RegionId" not in labeled.point_data:
+        return raw_surf
+    import numpy as np  # local; the rest of the file uses np already
+    region_ids = np.unique(labeled.point_data["RegionId"])
+    if len(region_ids) <= 1:
+        return raw_surf
+
+    # Score each region by max axis extent. The farfield will be by far
+    # the largest. Drop ONLY the single largest region.
+    ext_by_rid: dict[int, float] = {}
+    for rid in region_ids:
+        mask = labeled.point_data["RegionId"] == rid
+        region = labeled.extract_points(mask, adjacent_cells=True)
+        b = region.bounds
+        ext_by_rid[int(rid)] = max(b[1] - b[0], b[3] - b[2], b[5] - b[4])
+    farfield_rid = max(ext_by_rid, key=ext_by_rid.get)
+
+    aircraft_mask = labeled.point_data["RegionId"] != farfield_rid
+    aircraft = labeled.extract_points(aircraft_mask, adjacent_cells=True)
+    return aircraft.extract_surface() if hasattr(aircraft, "extract_surface") else aircraft
 
 
 def _autoselect_field(surf: pv.PolyData, preferred: str) -> str:
@@ -91,6 +129,10 @@ def _render_panel(
         p.camera_position = cam_pos
     else:
         p.camera_position = cam_pos
+    # Tight-fit the aircraft so it actually fills the frame, not lost in
+    # whatever leftover farfield volume the camera was originally framing.
+    p.reset_camera(bounds=surf.bounds)
+    p.camera.zoom(1.25)
     p.screenshot(str(out_png), transparent_background=False)
     p.close()
 

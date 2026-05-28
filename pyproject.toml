@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-mcp"
-version = "0.2.0"
+version = "0.2.1"
 description = "Local agentic orchestrator (Gemma 4 / Qwen 2.5 / Gemma 3) over the six aircraft-analysis MCPs."
 readme = "README.md"
 requires-python = ">=3.10"
