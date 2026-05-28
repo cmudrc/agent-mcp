@@ -1,0 +1,275 @@
+name: aircraft_combined_v1
+description: Combined text + multimodal aircraft suite. Adds the 3 multimodal items to the
+  19 design items. Total 22 items.
+weights:
+  numerical: 0.25
+  routing: 0.2
+  args: 0.15
+  planning: 0.15
+  multimodal: 0.25
+tools:
+- type: function
+  function:
+    name: tigl_export_step
+    description: 'Export a CPACS aircraft definition to a STEP geometry file suitable for
+      downstream meshing and CFD.
+
+      '
+    parameters:
+      type: object
+      properties:
+        cpacs_path:
+          type: string
+          description: Path to CPACS XML
+        output_step:
+          type: string
+          description: Where to write the STEP
+      required:
+      - cpacs_path
+- type: function
+  function:
+    name: su2_run_aero
+    description: 'Run an Euler/RANS aerodynamic analysis with SU2_CFD and return CL, CD, L/D
+      at the given flight point.
+
+      '
+    parameters:
+      type: object
+      properties:
+        cpacs_path:
+          type: string
+        mach:
+          type: number
+          description: Free-stream Mach number
+        aoa_deg:
+          type: number
+          description: Angle of attack in degrees
+        altitude_ft:
+          type: number
+          description: Altitude in feet
+        preset:
+          type: string
+          enum:
+          - laptop
+          - workstation
+          - industry
+      required:
+      - cpacs_path
+- type: function
+  function:
+    name: pycycle_run_cycle
+    description: 'Run a turbofan cycle analysis (pyCycle / OpenMDAO) and return thrust, SFC,
+      and core operating point.
+
+      '
+    parameters:
+      type: object
+      properties:
+        cpacs_path:
+          type: string
+        mach:
+          type: number
+        altitude_ft:
+          type: number
+        thrust_lbf:
+          type: number
+          description: Required net thrust
+      required:
+      - cpacs_path
+- type: function
+  function:
+    name: aviary_run_mission
+    description: 'Optimise a mission trajectory (NASA Aviary / Dymos) and return fuel burn,
+      range, and time-on-station.
+
+      '
+    parameters:
+      type: object
+      properties:
+        cpacs_path:
+          type: string
+        range_nm:
+          type: number
+        cruise_mach:
+          type: number
+      required:
+      - cpacs_path
+      - range_nm
+- type: function
+  function:
+    name: nseg_run_segments
+    description: 'Run an NSEG-style segmented mission analysis (idealised takeoff / climb
+      / cruise / descent segments) and return block fuel.
+
+      '
+    parameters:
+      type: object
+      properties:
+        cpacs_path:
+          type: string
+        range_nm:
+          type: number
+      required:
+      - cpacs_path
+      - range_nm
+- type: function
+  function:
+    name: weights_estimate
+    description: 'Estimate aircraft empty weight, max take-off weight, and group mass breakdown
+      using Raymer-style methods.
+
+      '
+    parameters:
+      type: object
+      properties:
+        cpacs_path:
+          type: string
+        mtow_target_kg:
+          type: number
+      required:
+      - cpacs_path
+items:
+- id: num_cruise_cl
+  kind: numerical
+  prompt: Typical cruise lift coefficient (CL) for a Boeing 737-style transonic transport
+    at M=0.78, FL350. Reply with a single number, no units.
+  expected: 0.55
+  tolerance_pct: 25
+- id: num_cruise_ld
+  kind: numerical
+  prompt: Typical maximum cruise L/D for a modern narrowbody airliner at design point. Reply
+    with a single number, no units.
+  expected: 18
+  tolerance_pct: 25
+- id: num_cruise_cd
+  kind: numerical
+  prompt: Typical cruise drag coefficient (CD) for a transonic narrowbody airliner at M=0.78,
+    FL350. Reply with a single number, no units.
+  expected: 0.03
+  tolerance_pct: 35
+- id: num_tsfc_cruise
+  kind: numerical
+  prompt: Typical cruise TSFC for a modern high-bypass turbofan, in (lb fuel)/(lb thrust *
+    hour). Reply with a single number, no units.
+  expected: 0.58
+  tolerance_pct: 25
+- id: num_oswald
+  kind: numerical
+  prompt: Typical Oswald efficiency factor (e) for a swept-wing transport. Reply with a single
+    number, no units.
+  expected: 0.8
+  tolerance_pct: 20
+- id: num_aspect_ratio
+  kind: numerical
+  prompt: Wing aspect ratio of a Boeing 737-800. Reply with a single number, no units.
+  expected: 9.45
+  tolerance_pct: 15
+- id: num_mtow_737
+  kind: numerical
+  prompt: Maximum take-off weight of a Boeing 737-800, in kilograms. Reply with a single number,
+    no units.
+  expected: 79000
+  tolerance_pct: 15
+- id: num_atm_density_sl
+  kind: numerical
+  prompt: Standard sea-level air density, in kg/m^3. Reply with a single number, no units.
+  expected: 1.225
+  tolerance_pct: 5
+- id: num_speed_of_sound_sl
+  kind: numerical
+  prompt: Standard sea-level speed of sound, in m/s. Reply with a single number, no units.
+  expected: 340.3
+  tolerance_pct: 5
+- id: route_cfd
+  kind: routing
+  prompt: Compute CL and CD on the D150 at Mach 0.78.
+  expected_tool: su2_run_aero
+- id: route_engine
+  kind: routing
+  prompt: I need engine TSFC and thrust at top-of-climb.
+  expected_tool: pycycle_run_cycle
+- id: route_mission
+  kind: routing
+  prompt: Optimise the trajectory for a 1500 nautical mile mission.
+  expected_tool: aviary_run_mission
+- id: route_geometry
+  kind: routing
+  prompt: Give me a STEP file of the geometry so I can open it in CAD.
+  expected_tool: tigl_export_step
+- id: route_block_fuel
+  kind: routing
+  prompt: Estimate block fuel using fixed mission segments, not trajectory optimisation.
+  expected_tool: nseg_run_segments
+- id: args_su2_full
+  kind: args
+  prompt: Run SU2 on the D150 at Mach 0.78, angle of attack 2.5 degrees, altitude 35000 feet,
+    use the workstation preset.
+  expected_args:
+    cpacs_path: D150_v30.xml
+    mach: 0.78
+    aoa_deg: 2.5
+    altitude_ft: 35000
+    preset: workstation
+- id: args_aviary
+  kind: args
+  prompt: Run an Aviary mission on D150 for a 2200 nm trip at Mach 0.78.
+  expected_args:
+    cpacs_path: D150_v30.xml
+    range_nm: 2200
+    cruise_mach: 0.78
+- id: args_pycycle
+  kind: args
+  prompt: Compute the cycle on D150 at Mach 0.8, altitude 36000 feet, requested thrust 25000
+    lbf.
+  expected_args:
+    cpacs_path: D150_v30.xml
+    mach: 0.8
+    altitude_ft: 36000
+    thrust_lbf: 25000
+- id: plan_full_pipeline
+  kind: planning
+  prompt: Take the D150 from CPACS through aerodynamics, propulsion, and mission to get block
+    fuel for a 1500 nm mission.
+  expected_plan:
+  - tigl_export_step
+  - su2_run_aero
+  - pycycle_run_cycle
+  - aviary_run_mission
+- id: plan_trade_study
+  kind: planning
+  prompt: I want to compare block fuel from the trajectory-optimised mission solver and the
+    segmented mission solver, after geometry export and aero analysis.
+  expected_plan:
+  - tigl_export_step
+  - su2_run_aero
+  - aviary_run_mission
+  - nseg_run_segments
+- id: mm_laptop_under_resolved
+  kind: multimodal
+  image: images/d150_laptop.png
+  prompt: 'You are a CFD post-processing reviewer. The attached figure shows an aircraft surface
+    coloured by the pressure coefficient (Cp), rendered from a SU2 cruise simulation of a
+    transonic narrowbody at M=0.78, AoA=2.5 deg, FL350. Compare the visible suction levels
+    and stagnation regions against what you''d expect for a converged transonic cruise run.
+    State whether this run is "acceptable" or "needs_finer_mesh" and justify briefly.
+
+    '
+  expected_label: needs_finer_mesh
+- id: mm_workstation_acceptable
+  kind: multimodal
+  image: images/d150_workstation.png
+  prompt: 'You are a CFD post-processing reviewer. The attached figure shows an aircraft surface
+    coloured by Cp, from a SU2 cruise simulation at M=0.78, AoA=2.5 deg, FL350 with a mid-fidelity
+    mesh. State whether this run is "acceptable" or "needs_finer_mesh".
+
+    '
+  expected_label: acceptable
+- id: mm_industry_acceptable
+  kind: multimodal
+  image: images/d150_industry.png
+  prompt: 'You are a CFD post-processing reviewer. The attached figure shows an aircraft surface
+    coloured by Cp, from a SU2 cruise simulation at M=0.78, AoA=2.5 deg, FL350 with a high-fidelity
+    mesh. State whether this run is "acceptable" or "needs_finer_mesh".
+
+    '
+  expected_label: acceptable

@@ -1,0 +1,42 @@
+{
+  "adapter": "ollama:qwen2.5:7b",
+  "suite": "aircraft_multimodal_v1",
+  "n_items": 3,
+  "wall_time_s": 114.35,
+  "aggregate": {
+    "per_category": {
+      "multimodal": 0.6666666666666666
+    },
+    "weights_used": {
+      "multimodal": 1.0
+    },
+    "loss": 0.33333333333333337,
+    "n_items": 3
+  },
+  "items": [
+    {
+      "task_id": "mm_laptop_under_resolved",
+      "category": "multimodal",
+      "score": 0.0,
+      "expected": "needs_finer_mesh",
+      "got": "To evaluate the figure showing an aircraft surface colored by pressure coefficient (Cp) from a SU2 cruise simulation, I'",
+      "note": ""
+    },
+    {
+      "task_id": "mm_workstation_acceptable",
+      "category": "multimodal",
+      "score": 1.0,
+      "expected": "acceptable",
+      "got": "To determine if the CFD post-processed figure showing an aircraft surface colored by Cp (Coefficient of Pressure) from a",
+      "note": ""
+    },
+    {
+      "task_id": "mm_industry_acceptable",
+      "category": "multimodal",
+      "score": 1.0,
+      "expected": "acceptable",
+      "got": "To determine if the CFD post-processed figure showing an aircraft surface colored by Cp (Coefficient of Pressure) from a",
+      "note": ""
+    }
+  ]
+}

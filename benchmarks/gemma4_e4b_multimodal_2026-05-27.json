@@ -1,0 +1,42 @@
+{
+  "adapter": "ollama:gemma4:e4b",
+  "suite": "aircraft_multimodal_v1",
+  "n_items": 3,
+  "wall_time_s": 161.45,
+  "aggregate": {
+    "per_category": {
+      "multimodal": 1.0
+    },
+    "weights_used": {
+      "multimodal": 1.0
+    },
+    "loss": 0.0,
+    "n_items": 3
+  },
+  "items": [
+    {
+      "task_id": "mm_laptop_under_resolved",
+      "category": "multimodal",
+      "score": 1.0,
+      "expected": "needs_finer_mesh",
+      "got": "This run **needs_finer_mesh**.\n\n### Justification:\n\n1.  **Lack of Transonic Features:** For a converged transonic cruise",
+      "note": ""
+    },
+    {
+      "task_id": "mm_workstation_acceptable",
+      "category": "multimodal",
+      "score": 1.0,
+      "expected": "acceptable",
+      "got": "**Decision:** Acceptable\n\n**Justification:**\n\nThe pressure coefficient ($C_p$) distribution shown across the aircraft su",
+      "note": ""
+    },
+    {
+      "task_id": "mm_industry_acceptable",
+      "category": "multimodal",
+      "score": 1.0,
+      "expected": "acceptable",
+      "got": "Based on the provided visualization and the context that a high-fidelity mesh was used, the run is **acceptable**.\n\n***\n",
+      "note": ""
+    }
+  ]
+}

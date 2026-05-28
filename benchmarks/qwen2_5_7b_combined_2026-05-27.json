@@ -1,0 +1,300 @@
+{
+  "adapter": "ollama:qwen2.5:7b",
+  "suite": "aircraft_combined_v1",
+  "n_items": 22,
+  "wall_time_s": 158.08,
+  "aggregate": {
+    "per_category": {
+      "numerical": 0.9497060409209469,
+      "routing": 1.0,
+      "args": 0.7388888888888889,
+      "planning": 0.8,
+      "multimodal": 0.6666666666666666
+    },
+    "weights_used": {
+      "numerical": 0.25,
+      "routing": 0.2,
+      "args": 0.15,
+      "planning": 0.15,
+      "multimodal": 0.25
+    },
+    "loss": 0.16507348976976327,
+    "n_items": 22
+  },
+  "items": [
+    {
+      "task_id": "num_cruise_cl",
+      "category": "numerical",
+      "score": 0.8925824723203236,
+      "expected": 0.55,
+      "got": "0.4",
+      "note": ""
+    },
+    {
+      "task_id": "num_cruise_ld",
+      "category": "numerical",
+      "score": 1.0,
+      "expected": 18.0,
+      "got": "15.0",
+      "note": ""
+    },
+    {
+      "task_id": "num_cruise_cd",
+      "category": "numerical",
+      "score": 1.0,
+      "expected": 0.03,
+      "got": "0.025",
+      "note": ""
+    },
+    {
+      "task_id": "num_tsfc_cruise",
+      "category": "numerical",
+      "score": 1.0,
+      "expected": 0.58,
+      "got": "0.5",
+      "note": ""
+    },
+    {
+      "task_id": "num_oswald",
+      "category": "numerical",
+      "score": 1.0,
+      "expected": 0.8,
+      "got": "0.85",
+      "note": ""
+    },
+    {
+      "task_id": "num_aspect_ratio",
+      "category": "numerical",
+      "score": 1.0,
+      "expected": 9.45,
+      "got": "9.5",
+      "note": ""
+    },
+    {
+      "task_id": "num_mtow_737",
+      "category": "numerical",
+      "score": 0.6547718959681983,
+      "expected": 79000.0,
+      "got": "60459.2",
+      "note": ""
+    },
+    {
+      "task_id": "num_atm_density_sl",
+      "category": "numerical",
+      "score": 1.0,
+      "expected": 1.225,
+      "got": "1.225",
+      "note": ""
+    },
+    {
+      "task_id": "num_speed_of_sound_sl",
+      "category": "numerical",
+      "score": 1.0,
+      "expected": 340.3,
+      "got": "343",
+      "note": ""
+    },
+    {
+      "task_id": "route_cfd",
+      "category": "routing",
+      "score": 1.0,
+      "expected": "su2_run_aero",
+      "got": [
+        "su2_run_aero"
+      ],
+      "note": ""
+    },
+    {
+      "task_id": "route_engine",
+      "category": "routing",
+      "score": 1.0,
+      "expected": "pycycle_run_cycle",
+      "got": [
+        "pycycle_run_cycle"
+      ],
+      "note": ""
+    },
+    {
+      "task_id": "route_mission",
+      "category": "routing",
+      "score": 1.0,
+      "expected": "aviary_run_mission",
+      "got": [
+        "aviary_run_mission"
+      ],
+      "note": ""
+    },
+    {
+      "task_id": "route_geometry",
+      "category": "routing",
+      "score": 1.0,
+      "expected": "tigl_export_step",
+      "got": [
+        "tigl_export_step"
+      ],
+      "note": ""
+    },
+    {
+      "task_id": "route_block_fuel",
+      "category": "routing",
+      "score": 1.0,
+      "expected": "nseg_run_segments",
+      "got": [
+        "nseg_run_segments"
+      ],
+      "note": ""
+    },
+    {
+      "task_id": "args_su2_full",
+      "category": "args",
+      "score": 0.8,
+      "expected": {
+        "cpacs_path": "D150_v30.xml",
+        "mach": 0.78,
+        "aoa_deg": 2.5,
+        "altitude_ft": 35000,
+        "preset": "workstation"
+      },
+      "got": {
+        "cpacs_path": [
+          "D150_v30.xml",
+          "/path/to/D150.cpacs"
+        ],
+        "mach": [
+          0.78,
+          0.78
+        ],
+        "aoa_deg": [
+          2.5,
+          2.5
+        ],
+        "altitude_ft": [
+          35000,
+          35000.0
+        ],
+        "preset": [
+          "workstation",
+          "workstation"
+        ]
+      },
+      "note": ""
+    },
+    {
+      "task_id": "args_aviary",
+      "category": "args",
+      "score": 0.6666666666666666,
+      "expected": {
+        "cpacs_path": "D150_v30.xml",
+        "range_nm": 2200,
+        "cruise_mach": 0.78
+      },
+      "got": {
+        "cpacs_path": [
+          "D150_v30.xml",
+          "D150_cpacs_file.path"
+        ],
+        "range_nm": [
+          2200,
+          2200.0
+        ],
+        "cruise_mach": [
+          0.78,
+          0.78
+        ]
+      },
+      "note": ""
+    },
+    {
+      "task_id": "args_pycycle",
+      "category": "args",
+      "score": 0.75,
+      "expected": {
+        "cpacs_path": "D150_v30.xml",
+        "mach": 0.8,
+        "altitude_ft": 36000,
+        "thrust_lbf": 25000
+      },
+      "got": {
+        "cpacs_path": [
+          "D150_v30.xml",
+          "D150_cpacs.xml"
+        ],
+        "mach": [
+          0.8,
+          0.8
+        ],
+        "altitude_ft": [
+          36000,
+          36000.0
+        ],
+        "thrust_lbf": [
+          25000,
+          25000.0
+        ]
+      },
+      "note": ""
+    },
+    {
+      "task_id": "plan_full_pipeline",
+      "category": "planning",
+      "score": 0.8,
+      "expected": [
+        "tigl_export_step",
+        "su2_run_aero",
+        "pycycle_run_cycle",
+        "aviary_run_mission"
+      ],
+      "got": [
+        "tigl_export_step",
+        "su2_run_aero",
+        "pycycle_run_cycle",
+        "aviary_run_mission",
+        "nseg_run_segments"
+      ],
+      "note": ""
+    },
+    {
+      "task_id": "plan_trade_study",
+      "category": "planning",
+      "score": 0.8,
+      "expected": [
+        "tigl_export_step",
+        "su2_run_aero",
+        "aviary_run_mission",
+        "nseg_run_segments"
+      ],
+      "got": [
+        "tigl_export_step",
+        "su2_run_aero",
+        "pycycle_run_cycle",
+        "aviary_run_mission",
+        "nseg_run_segments"
+      ],
+      "note": ""
+    },
+    {
+      "task_id": "mm_laptop_under_resolved",
+      "category": "multimodal",
+      "score": 0.0,
+      "expected": "needs_finer_mesh",
+      "got": "To evaluate the figure showing an aircraft surface colored by pressure coefficient (Cp) from a SU2 cruise simulation, I'",
+      "note": ""
+    },
+    {
+      "task_id": "mm_workstation_acceptable",
+      "category": "multimodal",
+      "score": 1.0,
+      "expected": "acceptable",
+      "got": "To determine if the CFD post-processed figure showing an aircraft surface colored by Cp (Coefficient of Pressure) from a",
+      "note": ""
+    },
+    {
+      "task_id": "mm_industry_acceptable",
+      "category": "multimodal",
+      "score": 1.0,
+      "expected": "acceptable",
+      "got": "To determine if the CFD post-processed figure showing an aircraft surface colored by Cp (Coefficient of Pressure) from a",
+      "note": ""
+    }
+  ]
+}

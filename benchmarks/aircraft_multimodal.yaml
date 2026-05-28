@@ -1,0 +1,51 @@
+name: aircraft_multimodal_v1
+description: >
+  Multimodal sub-suite. Three D150 transonic-cruise SU2 runs rendered as
+  3-panel aircraft figures (isometric / top / side) coloured by Cp.
+  Same flight point (M 0.78, AoA 2.5 deg, FL350) at three mesh
+  fidelities. Ground-truth verdicts come from the Cp range and L/D
+  produced by SU2 at each fidelity -- the laptop preset is clearly
+  under-resolved (Cp peak only -0.68, L/D=4), workstation is the first
+  defensible run (Cp peak -1.22, L/D=20.06), industry is fully
+  converged (Cp peak -1.61, L/D=17 with proper RANS).
+
+  We expect text-only models to score ~0 on this suite; that's the
+  point. Multimodal models like gemma4:e4b should be able to read mesh
+  quality off the picture + caption.
+
+weights:
+  multimodal: 1.0
+
+items:
+  - id: mm_laptop_under_resolved
+    kind: multimodal
+    image: images/d150_laptop.png
+    prompt: >
+      You are a CFD post-processing reviewer. The attached figure shows an
+      aircraft surface coloured by the pressure coefficient (Cp), rendered
+      from a SU2 cruise simulation of a transonic narrowbody at M=0.78,
+      AoA=2.5 deg, FL350. Compare the visible suction levels and stagnation
+      regions against what you'd expect for a converged transonic cruise
+      run. State whether this run is "acceptable" or "needs_finer_mesh"
+      and justify briefly.
+    expected_label: needs_finer_mesh
+
+  - id: mm_workstation_acceptable
+    kind: multimodal
+    image: images/d150_workstation.png
+    prompt: >
+      You are a CFD post-processing reviewer. The attached figure shows an
+      aircraft surface coloured by Cp, from a SU2 cruise simulation
+      at M=0.78, AoA=2.5 deg, FL350 with a mid-fidelity mesh. State
+      whether this run is "acceptable" or "needs_finer_mesh".
+    expected_label: acceptable
+
+  - id: mm_industry_acceptable
+    kind: multimodal
+    image: images/d150_industry.png
+    prompt: >
+      You are a CFD post-processing reviewer. The attached figure shows an
+      aircraft surface coloured by Cp, from a SU2 cruise simulation at
+      M=0.78, AoA=2.5 deg, FL350 with a high-fidelity mesh. State
+      whether this run is "acceptable" or "needs_finer_mesh".
+    expected_label: acceptable

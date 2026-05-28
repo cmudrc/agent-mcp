@@ -1,12 +1,17 @@
-# DEMO RUNBOOK — agent-driven aircraft analysis
+# DEMO RUNBOOK — hybrid agent-driven aircraft analysis
 
 Goal: drive the full pipeline (geometry → aero → engine → mission) from
-natural language in front of the Boeing team. ~12 minutes if every
-command lands cleanly. Mark each block as a slide-able beat.
+natural language in front of the Boeing team, with **Gemma 4 visually
+verifying the SU2 output** mid-flow. ~15 minutes if every command
+lands cleanly.
 
 > **Pre-meeting**: 30 minutes before, run **Block 0** end-to-end so
-> Ollama has the models hot and the SU2 mesh is cached. The cold-start
+> Ollama has both models hot and SU2 has cached meshes. Cold-start
 > warmup is the only thing that will burn time in front of the room.
+
+> **Fallback**: record this morning-of with QuickTime
+> (`cmd+shift+5 → Record Selected Portion`) and save as
+> `demo_recording_2026-05-27.mov`. Play that if WiFi or Ollama acts up.
 
 ---
 
@@ -16,150 +21,170 @@ command lands cleanly. Mark each block as a slide-able beat.
 cd ~/Desktop/mcpproject
 source .venv/bin/activate
 
-# 1. Confirm Ollama is up and models are pulled
+# 1. Confirm Ollama + models
 brew services list | grep ollama
-ollama list                                    # expect: gemma4:e4b, qwen2.5:7b
+ollama list                                   # expect: qwen2.5:7b, gemma4:e4b
 
-# 2. Warm the cache: small Qwen ping (~5s) and small Gemma 4 ping (~30s)
-ollama run qwen2.5:7b   "say warmup" --verbose
-ollama run gemma4:e4b   "say warmup" --verbose
+# 2. Warm both models in memory
+ollama run qwen2.5:7b   "warmup" --verbose 2>&1 | tail -3
+ollama run gemma4:e4b   "warmup" --verbose 2>&1 | tail -3
 
-# 3. Confirm SU2 binary is on PATH
+# 3. SU2 + CPACS sanity
 which SU2_CFD                                  # /Users/mayank/.local/su2/bin/SU2_CFD
-
-# 4. Confirm the most-recent CPACS file is in place
 ls -la D150_v30.xml
+
+# 4. Optional: pre-warm the SU2 mesh so live demo skips Gmsh
+ls pipeline_output/su2_run/vol_solution.vtu    # if absent, run one SU2 ahead of time
 ```
 
-If any of the above fails, pause and fix BEFORE going live.
+If anything fails, pause and fix BEFORE going live.
 
 ---
 
-## Block 1 — Show the architecture (slide, ~1 min)
+## Block 1 — Architecture slide (~1 min)
 
-Open `aircraft-analysis/README.md` or the PPT. Show the six MCPs
-sitting around the shared CPACS XML, with the agent as the orchestrator
-above the bus. Verbal: *"The agent picks tools; the CPACS XML is the
-single source of truth; OVS is a CI gate, not a runtime check."*
+Open `aircraft-analysis/README.md` or PPT slide showing:
+- Six MCPs around a shared CPACS XML
+- Agent layer above with Qwen (planner) + Gemma (seeker)
+- OVS is a CI gate, not runtime
+
+Verbal: *"Agent picks tools; CPACS is the single source of truth; the
+two-model hybrid is the recommended production setup."*
 
 ---
 
-## Block 2 — Production agent (Qwen 2.5), one shot (~2 min)
+## Block 2 — Hybrid agent, one shot (~3 min)
 
-This is the headline. **Production backend is Qwen 2.5 7B because it
-beat Gemma 4 E4B on our internal benchmark**; we will show Gemma next.
+This is the headline. **Qwen plans, Gemma sees, both run on a 16 GB
+MacBook with no cloud calls.**
 
 ```bash
-python gemma_agent.py \
+python agent-mcp/hybrid_agent.py \
+  --cpacs D150_v30.xml \
+  --prompt "Run SU2 ONCE on D150 with workstation preset (Mach 0.78, AoA 2.5, FL350). The seeker's verdict is informational -- do NOT re-run SU2. Report CL/CD/L/D and the seeker's verdict via report_done."
+```
+
+What the audience will see, narrated as it scrolls:
+
+1. `--- Turn 1 [planner=qwen2.5:7b] ---`
+2. `CALL  su2_run_aero({"mach": 0.78, "aoa": 2.5, "preset": "workstation"...})`
+3. SU2 runs (~35 s).
+4. `>>>   rendering 3-panel composite from .../vol_solution.vtu for Seeker...`
+5. `>>>   wrote ...turn01_su2_run_aero.png  cells=11,270  range=(-1.22, 0.80)`
+6. `>>>   calling SEEKER (gemma4:e4b)...`
+7. `>>>   SEEKER: verdict=acceptable conf=0.85 (40 s)` (or `needs_finer_mesh`)
+8. `--- Turn 2 [planner=qwen2.5:7b] ---`
+9. `CALL  report_done(...)`
+10. `=== FINAL (planner) ===` with CL/CD/L/D + seeker's verdict.
+
+Talk track during steps 4–7: *"Note that the agent never asked me how
+to visualise SU2 output. It is autonomously rendering an isometric +
+top + side composite of the surface Cp, captioning it with the cell
+count and the Cp range, and handing the whole package to Gemma 4 for
+inspection. Gemma 4 reads the image with the numerical context and
+returns a structured verdict."*
+
+Total wall time ~80 s end-to-end.
+
+---
+
+## Block 3 — Open the seeker's render (~1 min)
+
+```bash
+open agent-mcp/hybrid_seeker_renders_focused/turn01_su2_run_aero.png
+```
+
+Show the 3-panel composite. Point at the suction peak on the upper
+wing in the isometric, the span-wise loading in the top view, and the
+nose stagnation in the side view. **This is what the LLM is seeing.**
+
+---
+
+## Block 4 — Solo backend for contrast (~2 min)
+
+```bash
+# Plain Qwen, no seeker, for comparison
+python agent-mcp/gemma_agent.py \
   --model qwen2.5:7b \
   --cpacs D150_v30.xml \
-  --prompt "Run SU2 on the D150 at Mach 0.78, AoA 2.5 degrees, FL350, workstation preset. Then report CL, CD, L/D."
+  --prompt "Run SU2 on D150 at Mach 0.78, AoA 2.5, FL350, workstation. Report CL/CD/L/D."
 ```
 
-Expected: agent picks `su2_run_aero`, fills the four args correctly,
-SU2 runs in ~35 s, agent calls `report_done` with `CL ≈ 0.55`, `L/D ≈
-20`. *Total wall time ≈ 50 s.*
-
-Talk track while it runs: "Note the agent is filling in *exactly* the
-arguments I spoke. The mesh preset is a single keyword, and the SU2
-adapter expands it into a full gmsh + SU2 config behind the scenes.
-The CPACS XML gets a new commit at the end."
-
----
-
-## Block 3 — Beta agent (Gemma 4), same prompt (~3 min)
-
-```bash
-python gemma_agent.py \
-  --model gemma4:e4b \
-  --cpacs D150_v30.xml \
-  --prompt "Run SU2 on the D150 at Mach 0.78, AoA 2.5 degrees, FL350, workstation preset. Then report CL, CD, L/D."
-```
-
-Expected: same outcome, slower (~80 s end-to-end including SU2). Same
-tool calls because Gemma 4 has **native function calling** which Gemma
-3 didn't.
-
-Talk track: "Gemma 4 is the model Boeing wants us to land on. It works
-today via Ollama as of March 2026. We're flagging it beta because on
-our benchmark Qwen 2.5 is currently more reliable on planning tasks
-(0.80 vs 0.52) and ~8× faster, but the gap is closing."
-
----
-
-## Block 4 — Multimodal Seeker (~2 min)
-
-```bash
-python scripts/vtu_to_gemma.py \
-  --vtu run_d150_workstation/flow.vtu \
-  --field Pressure_Coefficient \
-  --model gemma4:e4b
-```
-
-Expected: a PNG of the surface CP shading, then a structured JSON
-verdict from Gemma 4 calling the mesh `acceptable` or
-`needs_finer_mesh` with a `confidence` score and a one-line
-recommendation.
-
-Talk track: "Same Gemma 4 weights, now reading the SU2 image. This is
-the Seeker role from the SBD paper Ron shared — visual interpretation
-of solver output. It's what unlocks the 'multimodality' Boeing flagged
-as the reason for Gemma."
+Same SU2 numbers, no image verification. Use to make the point: *"This
+is what we shipped before. The hybrid adds the Gemma visual
+verification layer for free."*
 
 ---
 
 ## Block 5 — Benchmark transparency (~2 min)
 
 ```bash
-cd ../agentic-bench
-cat reports/gemma4_e4b.json | jq '.aggregate'
-cat reports/qwen2_5_7b.json | jq '.aggregate'
+cd agentic-bench
+cat reports/hybrid_combined.json        | jq '.aggregate'
+cat reports/qwen2_5_7b_combined.json    | jq '.aggregate'
+cat reports/gemma4_e4b_multimodal.json  | jq '.aggregate'
+cd ..
 ```
 
-Show the loss numbers. Pull up the README on
-`https://github.com/cmudrc/agentic-bench` if there's a screen handy.
+Show three numbers:
+- **Hybrid combined loss: 0.082** (the new headline)
+- **Solo Qwen combined loss: 0.165** (the previous default)
+- **Gemma 4 multimodal alone: 0.000 loss** (3/3 on the visual suite)
 
-Talk track: "This is published. Any agentic pipeline can plug in via
-the adapter API. We are not asking anyone to trust our claims — we are
-shipping the harness."
+Talk track: *"This is reproducible. Anyone can pull
+`cmudrc/agentic-bench` and reproduce these numbers on their machine."*
 
 ---
 
-## Block 6 — Adaptive-mesh skill (optional, ~2 min)
+## Block 6 — RCAIDE outlook (~1 min, slides only)
 
-If time allows:
-
-```bash
-python gemma_agent.py \
-  --model qwen2.5:7b \
-  --cpacs D150_v30.xml \
-  --prompt "Use the adaptive mesh refinement skill on D150 at cruise. Start at laptop preset and escalate until CL plateaus to within 1%. Report the table of preset, CL, CD, L/D, wall time."
-```
-
-Expected: agent runs SU2 three times (laptop → workstation → industry),
-returns a refinement table. *Total wall time ≈ 5 min.* This is the
-piece that demonstrates "iterative description on decisions" Chris
-flagged from the professor's meeting.
+Mention `cmudrc/rcaide-mcp` as a planned 7th MCP (low-fi aero,
+stability, noise, emissions) — pending RCAIDE licensing conversation
+with UIUC. Reference `CHAT_WITH_CHRIS_2026-05-21.md` if anyone digs in.
 
 ---
 
 ## Block 7 — Wrap (~1 min)
 
 - 6 MCPs live; 7th (`rcaide-mcp`) under consideration.
-- 2 working agents (production + beta), one tool surface.
-- Benchmark harness public.
-- Open question for Ron: laptop specs, Windows SU2 binary,
-  units-flag convention, what "validated" means.
+- 3 agents live: hybrid (production), gemma_agent (single-model),
+  gemma_agent_v2 (Gemma-3 fallback).
+- Public benchmark harness: `cmudrc/agentic-bench`.
+- All open-weight; everything runs locally on a 16 GB Mac. Air-gappable.
+- Open questions for Ron: Windows SU2 binary, laptop specs, units
+  convention, what "production-validated" means.
 
 ---
 
-## Fallback: pre-recorded video
-
-If the network is bad or Ollama hangs, switch to:
+## Commands cheat-sheet (single-card reference)
 
 ```bash
-open ~/Desktop/mcpproject/demo_recording_2026-05-21.mov
+# Pre-flight
+source .venv/bin/activate
+ollama list && ollama run qwen2.5:7b "warmup" && ollama run gemma4:e4b "warmup"
+
+# Headline: hybrid one-shot
+python agent-mcp/hybrid_agent.py --cpacs D150_v30.xml \
+  --prompt "Run SU2 ONCE on D150 with workstation preset (Mach 0.78, AoA 2.5, FL350). Report CL/CD/L/D plus seeker verdict."
+
+# Standalone Qwen for comparison
+python agent-mcp/gemma_agent.py --model qwen2.5:7b --cpacs D150_v30.xml \
+  --prompt "Run SU2 on D150 at Mach 0.78, AoA 2.5, FL350, workstation. Report CL/CD/L/D."
+
+# Standalone Gemma 4 multimodal verdict on a cached VTU
+python agent-mcp/scripts/vtu_to_gemma.py \
+  --vtu pipeline_output/su2_run/vol_solution.vtu --field Pressure_Coefficient
+
+# Benchmark transparency
+cd agentic-bench
+cat reports/hybrid_combined.json     | jq '.aggregate'
+cat reports/qwen2_5_7b_combined.json | jq '.aggregate'
 ```
 
-…and narrate over the recording. **Record this the morning of**, so
-the demo runbook above doubles as the recording script.
+---
+
+## Recording the fallback video (do this morning-of)
+
+1. Run Block 0 → Block 7 in order, talking through each step.
+2. Save as `~/Desktop/mcpproject/demo_recording_2026-05-27.mov`.
+3. Test playback before the meeting.
