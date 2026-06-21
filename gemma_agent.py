@@ -20,7 +20,7 @@ structured-output fallback path.
 Usage:
     python gemma_agent.py
     python gemma_agent.py --model gemma4:e4b
-    python gemma_agent.py --model qwen2.5:7b      # legacy fallback for comparison
+    python gemma_agent.py --model qwen2.5:7b      # historical comparison only
     python gemma_agent.py --cpacs D150_v30.xml \
                           --prompt "What's the block fuel for a 1500 nm mission?"
 
@@ -243,6 +243,26 @@ def _tigl(cpacs_path: str, output_dir: str = "pipeline_output") -> dict[str, Any
                         "type": "number",
                         "description": "If set (e.g. 1e-4), SU2 stops early when LIFT plateaus.",
                     },
+                    "surface_density": {
+                        "type": "integer",
+                        "description": (
+                            "Open-ended override of the Gmsh surface density "
+                            "(span / characteristic-length ratio). Leave unset to "
+                            "use the preset value (30/80/200 for laptop/workstation/"
+                            "industry). Use a custom integer when delivering a "
+                            "converged SU2 result via the open-ended refinement "
+                            "skill (e.g. 60, 120, 240 ...). Higher values produce "
+                            "finer meshes; 5M-cell ceiling for safety."
+                        ),
+                    },
+                    "farfield_factor": {
+                        "type": "number",
+                        "description": (
+                            "Optional override of the farfield-box / aircraft-span "
+                            "ratio used by the Gmsh meshing step (default 10.0 for "
+                            "laptop/workstation, 15.0 for industry)."
+                        ),
+                    },
                 },
                 "required": ["cpacs_path"],
             },
@@ -259,15 +279,18 @@ def _su2(
     output_dir: str = "pipeline_output/su2_run",
     preset: str = "laptop",
     cl_convergence_eps: float | None = None,
+    surface_density: int | None = None,
+    farfield_factor: float | None = None,
 ) -> dict[str, Any]:
     from su2_mcp import cpacs_adapter as a
 
     # Auto-discover an existing mesh/STEP if the agent didn't pass one.
     # Prefer artifacts from the same aircraft (filename match) so we don't
     # mix a D150 CPACS with a DLR-F25 mesh, etc.
-    # When the user asks for a non-laptop preset, force a fresh mesh from
-    # the STEP so we actually exercise the higher density.
-    if preset != "laptop":
+    # When the user asks for a non-laptop preset OR a custom surface
+    # density, force a fresh mesh from the STEP so we actually exercise
+    # the requested density.
+    if preset != "laptop" or surface_density is not None:
         mesh_path = None
         if step_path is None:
             step_path = _find_existing_artifact(".step", cpacs_path)
@@ -286,6 +309,8 @@ def _su2(
         output_dir=output_dir,
         preset=preset,
         cl_convergence_eps=cl_convergence_eps,
+        surface_density=surface_density,
+        farfield_factor=farfield_factor,
     )
     _save_cpacs(cpacs_path, new_xml)
     summary.setdefault("_used_mesh", mesh_path)
@@ -494,6 +519,21 @@ SYSTEM_PROMPT = textwrap.dedent("""\
         prior runs when present -- you do not need to specify them.
 
     Always call `report_done` as the final tool call.
+
+    ## HARD RULES (these are non-negotiable; violating them is a failure)
+    R1. ACT, DO NOT EXPLAIN. Your first token must be a tool call, not prose.
+    R2. One tool per turn. Never chain multiple tools in one response.
+    R3. If a tool returns an error, call report_done immediately — do NOT retry
+        with the same arguments and do NOT swap to a different tool silently.
+    R4. Pick exactly ONE mission tool (nseg OR aviary), never both.
+    R5. Do not call the same tool twice with identical arguments.
+    R6. If the user says "run once" or names a preset, honour it — no escalation.
+    R7. Always include CL, CD, L/D (when available) and the mesh preset used
+        in the report_done summary.
+
+    ## FORBIDDEN PHRASES
+    Do not begin a turn with any of: "Let me", "I will", "I'll", "Sure",
+    "Of course", "First, I'll", "To do this". Start with a tool call.
 """)
 
 
@@ -570,11 +610,10 @@ def run_agent(model: str, cpacs_path: str, user_prompt: str, max_turns: int = 12
 
 
 DEFAULT_MODEL = "gemma4:e4b"
-LEGACY_FALLBACK_MODEL = "qwen2.5:7b"
 GEMMA4_NOTE = (
     "Using Gemma 4 E4B (8B effective params, multimodal, native tool calling). "
-    "Pulled from Ollama's library/gemma4. The legacy `qwen2.5:7b` stand-in "
-    "is still available via --model qwen2.5:7b for comparison."
+    "Pulled from Ollama's library/gemma4. `qwen2.5:7b` is still accepted via "
+    "--model qwen2.5:7b for historical benchmark comparison only."
 )
 GEMMA3_NOTE = (
     "NOTE: Ollama's gemma3 images do not expose tool-calling. Either upgrade "
@@ -612,11 +651,15 @@ def main() -> int:
 
     if args.model.startswith("gemma3"):
         print(
-            f"\nWARNING: '{args.model}' currently does not support tool calls "
-            "in Ollama, so the agent will fail at the first chat turn. "
-            f"Falling back to {LEGACY_FALLBACK_MODEL}. {GEMMA3_NOTE}\n"
+            f"\nERROR: '{args.model}' does not expose tool-calling through "
+            "Ollama. Re-run with the default Gemma 4 model or use the "
+            "structured-output path:\n"
+            "  python gemma_agent.py --model gemma4:e4b\n"
+            "  python gemma_agent_v2.py --model gemma3:4b\n"
+            f"{GEMMA3_NOTE}\n",
+            file=sys.stderr,
         )
-        args.model = LEGACY_FALLBACK_MODEL
+        return 2
 
     if args.model.startswith("gemma4"):
         print(f"\n[gemma_agent] {GEMMA4_NOTE}")

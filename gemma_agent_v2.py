@@ -2,7 +2,7 @@
 """Gemma-driven agentic orchestrator -- structured-output edition.
 
 `gemma_agent.py` uses Ollama's native tool-calling API, which works on
-qwen2.5:7b but is refused by gemma3:4b ("does not support tools",
+gemma4:e4b but is refused by gemma3:4b ("does not support tools",
 HTTP 400). This script uses Ollama's *structured-output* feature
 (`format=<json_schema>`) instead, which gemma3:4b DOES support, and
 turns every model turn into a forced JSON object of the form
@@ -13,6 +13,10 @@ We dispatch the tool, append the JSON result back into the chat history
 as a user message labelled "Observation:", and loop until the model
 calls `report_done`. This is essentially a ReAct loop where the prompt
 brittleness is replaced by Ollama's constrained decoding.
+
+Recommended path is still `gemma_agent.py` (native tool calling on
+`gemma4:e4b`). Use *this* script only when you specifically need
+Gemma 3 (for example, larger context window or a Gemma-3-only finetune).
 
 Usage:
     python gemma_agent_v2.py --cpacs D150_v30.xml \
@@ -210,7 +214,7 @@ def run_gemma_agent(model: str, cpacs_path: str, user_prompt: str, max_turns: in
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--model", default="gemma3:4b",
-                   help="Ollama model id. gemma3:4b is the default; the script also works with gemma3:12b, qwen2.5:7b, etc.")
+                   help="Ollama model id. gemma3:4b is the default for this structured-output fallback; the script also works with gemma3:12b. Prefer gemma_agent.py with gemma4:e4b for production.")
     p.add_argument("--cpacs", default="D150_v30.xml", help="Path to the CPACS XML file.")
     p.add_argument("--prompt", default=None,
                    help="User prompt (one-shot). If omitted, drops into an interactive REPL.")

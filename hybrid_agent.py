@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Hybrid Planner+Seeker agent: Qwen 3 for tools, Gemma 4 for vision.
+"""Hybrid Planner+Seeker agent: all-Gemma edition (planner + vision).
 
-Architecture (this is the Asgari-et-al. Planner / Seeker / Answer Agent
-pattern realised with two open-weight local models):
+Architecture (Asgari-et-al. Planner / Seeker / Answer Agent pattern,
+realised with Gemma open-weight models):
 
     user prompt
        v
-    [Planner: Qwen 3] -- native Ollama tool-calling
+    [Planner: Gemma 4 E4B] -- native Ollama tool-calling (laptop tier)
+       or
+    [Planner: Gemma 3 27B] -- structured-output ReAct (--use-react, server tier)
        v
     tool calls against the six aircraft-analysis MCPs
        v
@@ -15,24 +17,22 @@ pattern realised with two open-weight local models):
     [Seeker: Gemma 4 E4B] -- multimodal verdict on the figure +
                               numerical context from the planner
        v
-    verdict fed back to Qwen as an "Observation" message
+    verdict fed back to the planner as an "Observation" message
        v
-    Qwen continues planning (e.g. trigger AMR if Seeker flags mesh)
+    planner continues (e.g. trigger AMR if Seeker flags mesh)
        v
-    [Answer Agent: Qwen 3] -- final structured summary via report_done
+    [Answer Agent: planner] -- final structured summary via report_done
 
-Why split the roles? Our agentic-bench results from 2026-05-21 show
-Qwen 3 dominates tool routing and multi-step planning, while Gemma 4
-dominates anything that involves looking at a picture. Putting them in
-sequence rather than picking one or the other gives us both halves of
-the agent's job at their respective strengths.
+Migration note (2026-05-28): Qwen was retired as the production planner
+(Boeing integration constraint). Gemma 4 E4B is the default laptop
+planner; Gemma 3 27B is the workstation-tier option via --use-react.
 
 Usage:
     python hybrid_agent.py --cpacs D150_v30.xml \\
         --prompt "Run SU2 on D150 at workstation preset, then have the seeker verify the mesh is converged before reporting."
 
     python hybrid_agent.py                                 # interactive REPL
-    python hybrid_agent.py --planner qwen2.5:7b            # fall back to old planner
+    python hybrid_agent.py --planner gemma3:27b --use-react  # workstation tier
 """
 
 from __future__ import annotations
@@ -75,12 +75,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "scripts"))
 from render_aircraft_views import render_composite  # noqa: E402
 
 
-DEFAULT_PLANNER = "qwen2.5:7b"
-# qwen3:14b was evaluated on 2026-05-27 -- powerful but 230s/turn on a 16 GB
-# Mac and prone to confusing aerospace acronyms (CL <-> Mach). qwen2.5:7b
-# stays the production planner; qwen3 stays available as --planner qwen3:14b
-# if you have the compute to wait.
-DEFAULT_PLANNER_FALLBACK = "qwen2.5:7b"
+DEFAULT_PLANNER = "gemma4:e4b"
+# Migration note (2026-05-28): Qwen retired (Boeing integration). Gemma 4 E4B
+# is the laptop-tier planner with native tool calling. For the larger
+# Gemma 3 27B workstation planner, pass --planner gemma3:27b --use-react.
+DEFAULT_PLANNER_FALLBACK = "gemma4:e4b"
 DEFAULT_SEEKER = "gemma4:e4b"
 
 
@@ -225,22 +224,22 @@ def run_hybrid(
 
     system_prompt = (
         planner_mod.SYSTEM_PROMPT
-        + "\n\nIMPORTANT (hybrid mode): after any tool that produces a "
-        + "volumetric SU2 result, a multimodal SEEKER agent (Gemma 4 E4B) "
-        + "will inspect a rendered figure of the surface Cp and return a "
-        + "JSON verdict {verdict, confidence, observations, recommendation}. "
-        + "You will see this verdict as an Observation.\n"
-        + "Refinement policy:\n"
-        + "  - At most ONE refinement step per request. If you used the "
-        + "laptop preset and the seeker says needs_finer_mesh, you MAY "
-        + "rerun ONCE with the workstation preset.\n"
-        + "  - If you already used the workstation or industry preset on "
-        + "the first call, do NOT escalate further -- accept the seeker's "
-        + "verdict and call report_done with both the solver numbers AND "
-        + "the seeker's verdict in the summary.\n"
-        + "  - If the user explicitly named a preset in the prompt, honour "
-        + "it on the first call and treat the seeker's verdict as "
-        + "informational only. Do not escalate."
+        + "\n\n## HYBRID-MODE ADDENDUM\n\n"
+        + "After any tool that produces a volumetric SU2 result, a "
+        + "multimodal SEEKER agent (Gemma 4 E4B) will inspect a rendered "
+        + "3-panel figure of the surface Cp and return a JSON verdict "
+        + "{verdict, confidence, observations, recommendation}. You will "
+        + "see this as an Observation.\n\n"
+        + "Refinement policy (non-negotiable):\n"
+        + "  P1. At most ONE mesh escalation per user request.\n"
+        + "  P2. If the user named a preset, honour it on the first call; "
+        + "treat the seeker verdict as informational only — do NOT escalate.\n"
+        + "  P3. If you used laptop and seeker says needs_finer_mesh, you MAY "
+        + "rerun ONCE with workstation. If you already used workstation or "
+        + "industry on the first call, do NOT escalate — call report_done.\n"
+        + "  P4. Never rerun the same tool with identical arguments after a "
+        + "failure or after the user said 'run once' / 'single pass'.\n"
+        + "Include both solver numbers AND the seeker verdict in report_done."
     )
 
     messages: list[dict[str, Any]] = [
