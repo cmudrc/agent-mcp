@@ -176,6 +176,22 @@ markdown trail of every decision.
   result on new geometry. Honours hard wall-clock + cell-count caps.
   Deterministic counterpart for non-LLM users:
   [`scripts/run_converged_su2.py`](../scripts/run_converged_su2.py).
+- [`skills/SKILL_AOA_SWEEP.md`](skills/SKILL_AOA_SWEEP.md)
+  **New (2026-06-22).** Mesh once, sweep angle of attack, and report the
+  best-L/D angle and the trim angle for a target CL (interpolated). The
+  agent *searches* for the angle instead of being told it. Harness:
+  [`scripts/run_aoa_sweep.py`](../scripts/run_aoa_sweep.py).
+- [`skills/SKILL_ENGINE_RESIZE.md`](skills/SKILL_ENGINE_RESIZE.md)
+  **New (2026-06-22).** First two-discipline loop: re-run pyCycle with a
+  bumped design thrust and re-fly the mission in NSEG until the engine
+  just *closes the mission* at the top-of-climb sizing point. Newton-
+  converges the smallest engine meeting a thrust margin. Harness:
+  [`scripts/run_engine_resize.py`](../scripts/run_engine_resize.py).
+- [`skills/SKILL_CRUISE_MATCH.md`](skills/SKILL_CRUISE_MATCH.md)
+  **New (2026-06-22).** First three-discipline fixed point: SU2 drag
+  polar -> pyCycle sized so cruise thrust = drag -> NSEG block fuel ->
+  takeoff-weight/fuel closure. Harness:
+  [`scripts/run_cruise_match.py`](../scripts/run_cruise_match.py).
 
 ## Aircraft visualization (`scripts/render_aircraft_views.py`)
 
@@ -233,13 +249,19 @@ demo and the new open-ended mesh refinement run.
 
 ## Roadmap
 
+- **Done (2026-06-22)** -- The iterative-skill family is now four deep:
+  open-ended mesh, AoA sweep / trim, engine resize (pyCycle <-> NSEG),
+  and cross-discipline cruise match (SU2 <-> pyCycle <-> NSEG). Each
+  ships a `SKILL_*.md` and a no-LLM harness with unit tests; the two
+  coupling loops were validated end-to-end against the real
+  pyCycle/OpenMDAO + NSEG solvers.
 - **Q3 2026** -- Promote the open-ended mesh skill (and the converged
   delivery harness) from "opt-in" to a recommended default for new
   geometries.
-- **Q3 2026** -- First "iterative design" skill: agent reasons over
-  an AoA sweep to find trim point, instead of being told the AoA.
 - **Q4 2026** -- Promote the hybrid from "recommended" to the default
   in `pipeline/shared_cpacs_orchestrator.py`'s entry point.
+- **Q4 2026** -- Aviary-backed variant of the cruise-match loop
+  (trajectory-level mission in place of NSEG Breguet).
 - **Q1 2027** -- Evaluate larger Gemma family members and the optional
   Ollama Pi enterprise integration as a managed-inference backend.
 
