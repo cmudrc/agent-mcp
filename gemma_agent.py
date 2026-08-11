@@ -286,7 +286,7 @@ def _su2(
 
     # Auto-discover an existing mesh/STEP if the agent didn't pass one.
     # Prefer artifacts from the same aircraft (filename match) so we don't
-    # mix a D150 CPACS with a DLR-F25 mesh, etc.
+    # mix a D150 CPACS with another aircraft's mesh, etc.
     # When the user asks for a non-laptop preset OR a custom surface
     # density, force a fresh mesh from the STEP so we actually exercise
     # the requested density.
