@@ -45,7 +45,7 @@ If anything fails, pause and fix BEFORE going live.
 Open `agent-mcp/README.md` or the PPT slide showing:
 - Six MCPs around a shared CPACS XML.
 - Agent layer above with Gemma planner + Gemma multimodal seeker.
-- OVS is a CI gate, not runtime.
+- CI is a change-control gate on code, not a runtime check.
 
 Verbal: *"Agent picks tools; CPACS is the single source of truth; the
 all-Gemma hybrid is the production setup -- one model family, all
