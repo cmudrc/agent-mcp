@@ -6,7 +6,7 @@ The **agent layer** that drives our six aircraft-analysis MCPs
 [`pycycle-mcp`](https://github.com/cmudrc/pycycle-mcp),
 [`aviary-cpacs-mcp`](https://github.com/cmudrc/aviary-cpacs-mcp),
 [`nseg-mcp`](https://github.com/cmudrc/nseg-mcp), and the placeholder
-weights estimator inside `mission-mcp`).
+weights estimator inside `nseg-mcp`).
 
 This repo ships **three** interchangeable orchestrators, a multimodal
 aircraft-render helper, the iterative skills the agents follow, and a
@@ -105,7 +105,7 @@ WSL2 for the SU2 install step and runs the rest natively.
 # from the project root (where you'll keep all the cmudrc repos)
 python -m venv .venv && source .venv/bin/activate
 pip install -e ./tigl-mcp ./su2-mcp ./pycycle-mcp \
-            ./aviary-cpacs-mcp ./nseg-mcp ./mission-mcp \
+            ./aviary-cpacs-mcp ./nseg-mcp \
             ./shared_cpacs
 pip install -e ./agent-mcp
 pip install pyvista pillow ollama
@@ -175,23 +175,23 @@ markdown trail of every decision.
   (30 -> 60 -> 120 -> 240 -> ...) for delivering a *converged* SU2
   result on new geometry. Honours hard wall-clock + cell-count caps.
   Deterministic counterpart for non-LLM users:
-  [`scripts/run_converged_su2.py`](../scripts/run_converged_su2.py).
+  [`scripts/run_converged_su2.py`](https://github.com/cmudrc/aircraft-analysis/blob/main/scripts/run_converged_su2.py).
 - [`skills/SKILL_AOA_SWEEP.md`](skills/SKILL_AOA_SWEEP.md)
   **New (2026-06-22).** Mesh once, sweep angle of attack, and report the
   best-L/D angle and the trim angle for a target CL (interpolated). The
   agent *searches* for the angle instead of being told it. Harness:
-  [`scripts/run_aoa_sweep.py`](../scripts/run_aoa_sweep.py).
+  [`scripts/run_aoa_sweep.py`](https://github.com/cmudrc/aircraft-analysis/blob/main/scripts/run_aoa_sweep.py).
 - [`skills/SKILL_ENGINE_RESIZE.md`](skills/SKILL_ENGINE_RESIZE.md)
   **New (2026-06-22).** First two-discipline loop: re-run pyCycle with a
   bumped design thrust and re-fly the mission in NSEG until the engine
   just *closes the mission* at the top-of-climb sizing point. Newton-
   converges the smallest engine meeting a thrust margin. Harness:
-  [`scripts/run_engine_resize.py`](../scripts/run_engine_resize.py).
+  [`scripts/run_engine_resize.py`](https://github.com/cmudrc/aircraft-analysis/blob/main/scripts/run_engine_resize.py).
 - [`skills/SKILL_CRUISE_MATCH.md`](skills/SKILL_CRUISE_MATCH.md)
   **New (2026-06-22).** First three-discipline fixed point: SU2 drag
   polar -> pyCycle sized so cruise thrust = drag -> NSEG block fuel ->
   takeoff-weight/fuel closure. Harness:
-  [`scripts/run_cruise_match.py`](../scripts/run_cruise_match.py).
+  [`scripts/run_cruise_match.py`](https://github.com/cmudrc/aircraft-analysis/blob/main/scripts/run_cruise_match.py).
 
 ## Aircraft visualization (`scripts/render_aircraft_views.py`)
 
@@ -228,7 +228,13 @@ Reports ending in `_FIXED.json` are the post-correction numbers.
 ## Benchmarks (historical; both planners shown for transparency)
 
 Headline numbers from the combined 22-item suite
-([`cmudrc/agentic-bench`](https://github.com/cmudrc/agentic-bench)):
+([`cmudrc/agentic-bench`](https://github.com/cmudrc/agentic-bench)).
+
+The suite is 22 items in two parts: a 19-item text/tool suite (9 numerical,
+5 routing, 3 argument extraction, 2 planning) plus 3 multimodal items that
+need a vision model. `agentic-bench` documents the 19-item text suite on its
+own, since it runs without a multimodal backend; 19 + 3 = 22 is the combined
+figure quoted here.
 
 | Backend                                  | Loss      | Numerical | Routing | Args | Planning | Multimodal       | Wall (s) |
 | ---------------------------------------- | --------- | --------- | ------- | ---- | -------- | ---------------- | -------- |
@@ -268,3 +274,9 @@ demo and the new open-ended mesh refinement run.
 ## License
 
 Apache-2.0.
+
+## Maintainers
+
+Mayank Dixit ([@Kugel-Blitz-13](https://github.com/Kugel-Blitz-13)), Carnegie
+Mellon University — mayankd@cmu.edu
+Christopher McComb, Carnegie Mellon University — Design Research Collective

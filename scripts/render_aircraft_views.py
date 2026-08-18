@@ -31,7 +31,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 from typing import Optional
 
@@ -55,7 +54,11 @@ def _load_surface(vtu_path: Path) -> pv.PolyData:
     grid = pv.read(str(vtu_path))
     if isinstance(grid, pv.MultiBlock):
         grid = grid.combine()
-    raw_surf = grid.extract_surface(nonlinear_subdivision=0) if hasattr(grid, "extract_surface") else grid
+    raw_surf = (
+        grid.extract_surface(nonlinear_subdivision=0)
+        if hasattr(grid, "extract_surface")
+        else grid
+    )
 
     # If this isn't an SU2-style mesh (no farfield), connectivity might
     # still return 1 region; in that case return as-is.
@@ -63,6 +66,7 @@ def _load_surface(vtu_path: Path) -> pv.PolyData:
     if "RegionId" not in labeled.point_data:
         return raw_surf
     import numpy as np  # local; the rest of the file uses np already
+
     region_ids = np.unique(labeled.point_data["RegionId"])
     if len(region_ids) <= 1:
         return raw_surf
@@ -79,14 +83,23 @@ def _load_surface(vtu_path: Path) -> pv.PolyData:
 
     aircraft_mask = labeled.point_data["RegionId"] != farfield_rid
     aircraft = labeled.extract_points(aircraft_mask, adjacent_cells=True)
-    return aircraft.extract_surface() if hasattr(aircraft, "extract_surface") else aircraft
+    return (
+        aircraft.extract_surface() if hasattr(aircraft, "extract_surface") else aircraft
+    )
 
 
 def _autoselect_field(surf: pv.PolyData, preferred: str) -> str:
     """Pick the requested field if present, otherwise fall back gracefully."""
     candidates = list(surf.point_data.keys()) + list(surf.cell_data.keys())
-    for name in (preferred, "Pressure_Coefficient", "Pressure", "Mach",
-                 "Density", "Velocity_Magnitude", "Temperature"):
+    for name in (
+        preferred,
+        "Pressure_Coefficient",
+        "Pressure",
+        "Mach",
+        "Density",
+        "Velocity_Magnitude",
+        "Temperature",
+    ):
         if name in candidates:
             return name
     if candidates:
@@ -177,10 +190,7 @@ def render_composite(
     field = _autoselect_field(surf, field)
     n_pts = surf.n_points
     n_cells = surf.n_cells
-    arr = (
-        surf.point_data[field] if field in surf.point_data
-        else surf.cell_data[field]
-    )
+    arr = surf.point_data[field] if field in surf.point_data else surf.cell_data[field]
     arr = np.asarray(arr)
     field_range = (float(np.nanmin(arr)), float(np.nanmax(arr)))
 
@@ -191,14 +201,17 @@ def render_composite(
     panels = []
     for cam, label, idx in (
         ("iso", "Isometric", 0),
-        ("xy",  "Top (planform, +Z)", 1),
-        ("xz",  "Side (profile, +Y)", 2),
+        ("xy", "Top (planform, +Z)", 1),
+        ("xz", "Side (profile, +Y)", 2),
     ):
         p = tmp / f"panel_{idx}.png"
         _render_panel(surf, field, cam, label, p, cmap=cmap)
         panels.append(p)
 
-    full_caption = caption or f"{field}  surface cells={n_cells:,}  range=[{field_range[0]:.2f}, {field_range[1]:.2f}]"
+    full_caption = (
+        caption
+        or f"{field}  surface cells={n_cells:,}  range=[{field_range[0]:.2f}, {field_range[1]:.2f}]"
+    )
     if cell_count_hint and "cells=" not in full_caption:
         full_caption = f"{full_caption}  (volume mesh ~{cell_count_hint:,} cells)"
     _stack_horizontal(panels, out_path, caption=full_caption)
@@ -221,16 +234,28 @@ def render_composite(
 
 
 def _parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--vtu", required=True, type=Path, help="Path to SU2 volume/surface VTU")
-    p.add_argument("--field", default="Pressure_Coefficient",
-                   help="Scalar field to colour by (falls back if absent)")
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    p.add_argument(
+        "--vtu", required=True, type=Path, help="Path to SU2 volume/surface VTU"
+    )
+    p.add_argument(
+        "--field",
+        default="Pressure_Coefficient",
+        help="Scalar field to colour by (falls back if absent)",
+    )
     p.add_argument("--out", required=True, type=Path, help="Output PNG path")
-    p.add_argument("--caption", default="", help="Caption strip text (flight condition etc.)")
+    p.add_argument(
+        "--caption", default="", help="Caption strip text (flight condition etc.)"
+    )
     p.add_argument("--cmap", default="coolwarm", help="Matplotlib/PyVista colormap")
-    p.add_argument("--cell-count-hint", type=int, default=None,
-                   help="Volume cell count for the caption (otherwise only surface cells are shown)")
+    p.add_argument(
+        "--cell-count-hint",
+        type=int,
+        default=None,
+        help="Volume cell count for the caption (otherwise only surface cells are shown)",
+    )
     return p.parse_args()
 
 

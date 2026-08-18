@@ -25,7 +25,9 @@ if (
     and Path(sys.prefix).resolve() != (PROJECT_ROOT / ".venv").resolve()
 ):
     os.environ["VTU_RESPAWNED"] = "1"
-    os.execv(str(_VENV_PY), [str(_VENV_PY), str(Path(__file__).resolve()), *sys.argv[1:]])
+    os.execv(
+        str(_VENV_PY), [str(_VENV_PY), str(Path(__file__).resolve()), *sys.argv[1:]]
+    )
 
 os.environ.setdefault("PYVISTA_OFF_SCREEN", "true")
 
@@ -55,9 +57,17 @@ def render_vtu_to_png(vtu_path: Path, png_path: Path, field: str | None = None) 
 
     plotter = pv.Plotter(off_screen=True, window_size=(1280, 800))
     if field and field in arrays:
-        plotter.add_mesh(surface, scalars=field, cmap="coolwarm", show_edges=False, smooth_shading=True)
+        plotter.add_mesh(
+            surface,
+            scalars=field,
+            cmap="coolwarm",
+            show_edges=False,
+            smooth_shading=True,
+        )
     else:
-        plotter.add_mesh(surface, color="lightsteelblue", show_edges=False, smooth_shading=True)
+        plotter.add_mesh(
+            surface, color="lightsteelblue", show_edges=False, smooth_shading=True
+        )
 
     plotter.add_text(f"{vtu_path.parent.name} -- {field}", font_size=12)
     plotter.show_axes()
@@ -68,10 +78,17 @@ def render_vtu_to_png(vtu_path: Path, png_path: Path, field: str | None = None) 
     plotter.screenshot(str(png_path))
     plotter.close()
 
-    return {"png": str(png_path), "field": field, "n_points": surface.n_points, "n_cells": surface.n_cells}
+    return {
+        "png": str(png_path),
+        "field": field,
+        "n_points": surface.n_points,
+        "n_cells": surface.n_cells,
+    }
 
 
-def ask_gemma_about_image(png_path: Path, context: str, model: str = "gemma4:e4b") -> str:
+def ask_gemma_about_image(
+    png_path: Path, context: str, model: str = "gemma4:e4b"
+) -> str:
     """Pass the rendered image to Gemma multimodal and ask for a structured verdict."""
     import json
     import ollama
@@ -79,7 +96,16 @@ def ask_gemma_about_image(png_path: Path, context: str, model: str = "gemma4:e4b
     schema = {
         "type": "object",
         "properties": {
-            "verdict": {"type": "string", "enum": ["looks_ok", "anomaly", "needs_finer_mesh", "geometry_bad", "unclear"]},
+            "verdict": {
+                "type": "string",
+                "enum": [
+                    "looks_ok",
+                    "anomaly",
+                    "needs_finer_mesh",
+                    "geometry_bad",
+                    "unclear",
+                ],
+            },
             "confidence": {"type": "number"},
             "observations": {"type": "array", "items": {"type": "string"}},
             "recommendation": {"type": "string"},
@@ -115,9 +141,19 @@ def ask_gemma_about_image(png_path: Path, context: str, model: str = "gemma4:e4b
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("vtu", help="Path to a SU2 vol_solution.vtu file")
-    p.add_argument("--field", default=None, help="Override the field to colour the surface by")
-    p.add_argument("--model", default="gemma4:e4b", help="Multimodal Ollama model (gemma4:e4b or gemma3:4b)")
-    p.add_argument("--png", default=None, help="Where to write the PNG (default: alongside the VTU)")
+    p.add_argument(
+        "--field", default=None, help="Override the field to colour the surface by"
+    )
+    p.add_argument(
+        "--model",
+        default="gemma4:e4b",
+        help="Multimodal Ollama model (gemma4:e4b or gemma3:4b)",
+    )
+    p.add_argument(
+        "--png",
+        default=None,
+        help="Where to write the PNG (default: alongside the VTU)",
+    )
     args = p.parse_args()
 
     vtu = Path(args.vtu).resolve()

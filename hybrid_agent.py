@@ -56,12 +56,14 @@ if (
 ):
     os.environ["HYBRID_RESPAWNED"] = "1"
     print(f"[hybrid_agent] re-launching under {_VENV_PY}", flush=True)
-    os.execv(str(_VENV_PY), [str(_VENV_PY), str(Path(__file__).resolve()), *sys.argv[1:]])
+    os.execv(
+        str(_VENV_PY), [str(_VENV_PY), str(Path(__file__).resolve()), *sys.argv[1:]]
+    )
 
 # SU2 path
 _SU2_BIN = Path.home() / ".local" / "su2" / "bin"
 if _SU2_BIN.is_dir() and str(_SU2_BIN) not in os.environ.get("PATH", ""):
-    os.environ["PATH"] = f"{_SU2_BIN}:{os.environ.get('PATH','')}"
+    os.environ["PATH"] = f"{_SU2_BIN}:{os.environ.get('PATH', '')}"
 
 # Pull the shared tool registry from gemma_agent.py (one source of truth).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -90,7 +92,12 @@ SEEKER_SCHEMA: dict[str, Any] = {
     "properties": {
         "verdict": {
             "type": "string",
-            "enum": ["acceptable", "needs_finer_mesh", "needs_geometry_fix", "inconclusive"],
+            "enum": [
+                "acceptable",
+                "needs_finer_mesh",
+                "needs_geometry_fix",
+                "inconclusive",
+            ],
         },
         "confidence": {"type": "number"},
         "observations": {"type": "array", "items": {"type": "string"}},
@@ -148,7 +155,9 @@ def run_seeker(
         verdict = {
             "verdict": "inconclusive",
             "confidence": 0.0,
-            "observations": [f"seeker output was not valid JSON: {resp['message']['content'][:200]}"],
+            "observations": [
+                f"seeker output was not valid JSON: {resp['message']['content'][:200]}"
+            ],
             "recommendation": "rerun seeker or check image rendering",
         }
     verdict["_latency_s"] = round(dt, 2)
@@ -157,6 +166,7 @@ def run_seeker(
 
 
 # ---- Hybrid loop ------------------------------------------------------------
+
 
 def _find_latest_vtu(observation: dict) -> Path | None:
     """Inspect a tool observation for a path to a VTU we can render."""
@@ -168,7 +178,11 @@ def _find_latest_vtu(observation: dict) -> Path | None:
         if v and Path(v).exists():
             return Path(v)
     # Run dir mention
-    rundir = observation.get("run_dir") or observation.get("output_dir") or observation.get("workdir")
+    rundir = (
+        observation.get("run_dir")
+        or observation.get("output_dir")
+        or observation.get("workdir")
+    )
     if rundir:
         rd = Path(rundir)
         for candidate in ("vol_solution.vtu", "surface_flow.vtu", "flow.vtu"):
@@ -185,9 +199,19 @@ def _find_latest_vtu(observation: dict) -> Path | None:
 def _seeker_context_from(observation: dict, tool_name: str) -> dict:
     """Distil the planner's numeric state into a small dict for the seeker."""
     keep = {}
-    for k in ("mach", "aoa_deg", "altitude_ft", "preset", "iter_cap",
-              "cl", "cd", "l_over_d", "n_iters",
-              "wall_time_s", "mesh_source"):
+    for k in (
+        "mach",
+        "aoa_deg",
+        "altitude_ft",
+        "preset",
+        "iter_cap",
+        "cl",
+        "cd",
+        "l_over_d",
+        "n_iters",
+        "wall_time_s",
+        "mesh_source",
+    ):
         if isinstance(observation, dict) and k in observation:
             keep[k] = observation[k]
     keep["tool"] = tool_name
@@ -260,8 +284,13 @@ def run_hybrid(
         thought = msg.get("content", "") or ""
         if thought.strip():
             print(f"  Planner: {thought[:200]}")
-        messages.append({"role": "assistant", "content": thought,
-                         "tool_calls": msg.get("tool_calls")})
+        messages.append(
+            {
+                "role": "assistant",
+                "content": thought,
+                "tool_calls": msg.get("tool_calls"),
+            }
+        )
 
         tool_calls = msg.get("tool_calls") or []
         if not tool_calls:
@@ -279,14 +308,21 @@ def run_hybrid(
                     args = {}
             print(f"  CALL  {name}({json.dumps(args)[:160]})")
             try:
-                result = handlers[name](**args) if name in handlers else {"error": f"unknown tool {name}"}
+                result = (
+                    handlers[name](**args)
+                    if name in handlers
+                    else {"error": f"unknown tool {name}"}
+                )
             except Exception as e:
                 result = {"error": f"{type(e).__name__}: {e}"}
             print(f"  ←     {json.dumps(result, default=str)[:200]}")
-            messages.append({
-                "role": "tool", "name": name,
-                "content": json.dumps(result, default=str),
-            })
+            messages.append(
+                {
+                    "role": "tool",
+                    "name": name,
+                    "content": json.dumps(result, default=str),
+                }
+            )
 
             if isinstance(result, dict) and result.get("done"):
                 print("\n=== FINAL (planner) ===")
@@ -306,48 +342,70 @@ def run_hybrid(
                         field="Pressure_Coefficient",
                         caption=(
                             f"{Path(vtu).parent.name} / "
-                            f"M={result.get('mach','?')} AoA={result.get('aoa_deg','?')}deg "
-                            f"alt={result.get('altitude_ft','?')}ft / preset={result.get('preset','?')}"
+                            f"M={result.get('mach', '?')} AoA={result.get('aoa_deg', '?')}deg "
+                            f"alt={result.get('altitude_ft', '?')}ft / preset={result.get('preset', '?')}"
                         ),
                     )
-                    print(f"  >>>   wrote {png_path}  cells={info['surface_cells']:,}  range={info['field_range']}")
+                    print(
+                        f"  >>>   wrote {png_path}  cells={info['surface_cells']:,}  range={info['field_range']}"
+                    )
                     ctx = _seeker_context_from(result, name)
                     ctx["field_range"] = list(info["field_range"])
                     ctx["surface_cells"] = info["surface_cells"]
                     print(f"  >>>   calling SEEKER ({seeker_model})...")
                     verdict = run_seeker(seeker_model, png_path, ctx)
-                    print(f"  >>>   SEEKER: verdict={verdict['verdict']} conf={verdict['confidence']:.2f} "
-                          f"({verdict.get('_latency_s')}s)")
-                    messages.append({
-                        "role": "tool", "name": "seeker_verdict",
-                        "content": _format_seeker_obs(verdict, png_path),
-                    })
+                    print(
+                        f"  >>>   SEEKER: verdict={verdict['verdict']} conf={verdict['confidence']:.2f} "
+                        f"({verdict.get('_latency_s')}s)"
+                    )
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "name": "seeker_verdict",
+                            "content": _format_seeker_obs(verdict, png_path),
+                        }
+                    )
                 except Exception as e:
                     print(f"  >>>   seeker pipeline failed: {type(e).__name__}: {e}")
-                    messages.append({
-                        "role": "tool", "name": "seeker_verdict",
-                        "content": json.dumps({"error": str(e)}),
-                    })
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "name": "seeker_verdict",
+                            "content": json.dumps({"error": str(e)}),
+                        }
+                    )
 
     print("\n(agent stopped: max_turns reached)")
 
 
 # ---- CLI -------------------------------------------------------------------
 
+
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--planner", default=DEFAULT_PLANNER,
-                   help=f"Planner / tool-router model (default: {DEFAULT_PLANNER}). "
-                        f"Falls back to {DEFAULT_PLANNER_FALLBACK} if not pulled.")
-    p.add_argument("--seeker", default=DEFAULT_SEEKER,
-                   help=f"Multimodal seeker model (default: {DEFAULT_SEEKER})")
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    p.add_argument(
+        "--planner",
+        default=DEFAULT_PLANNER,
+        help=f"Planner / tool-router model (default: {DEFAULT_PLANNER}). "
+        f"Falls back to {DEFAULT_PLANNER_FALLBACK} if not pulled.",
+    )
+    p.add_argument(
+        "--seeker",
+        default=DEFAULT_SEEKER,
+        help=f"Multimodal seeker model (default: {DEFAULT_SEEKER})",
+    )
     p.add_argument("--cpacs", default="D150_v30.xml")
-    p.add_argument("--prompt", default=None,
-                   help="If omitted, drops into an interactive REPL.")
+    p.add_argument(
+        "--prompt", default=None, help="If omitted, drops into an interactive REPL."
+    )
     p.add_argument("--max-turns", type=int, default=8)
-    p.add_argument("--image-dir", default="hybrid_seeker_renders",
-                   help="Where to write the seeker's rendered PNGs")
+    p.add_argument(
+        "--image-dir",
+        default="hybrid_seeker_renders",
+        help="Where to write the seeker's rendered PNGs",
+    )
     return p.parse_args()
 
 
@@ -361,7 +419,10 @@ def _ensure_pulled(model: str, fallback: str | None = None) -> str:
     if model in present:
         return model
     if fallback and fallback in present:
-        print(f"[hybrid_agent] {model} not pulled; falling back to {fallback}", file=sys.stderr)
+        print(
+            f"[hybrid_agent] {model} not pulled; falling back to {fallback}",
+            file=sys.stderr,
+        )
         return fallback
     return model
 
@@ -381,14 +442,19 @@ def main() -> int:
         prompts = None
 
     def _one(prompt: str) -> None:
-        print(f"\n=== HYBRID AGENT ===")
+        print("\n=== HYBRID AGENT ===")
         print(f"  planner: {planner}")
         print(f"  seeker : {seeker}")
         print(f"  cpacs  : {args.cpacs}")
         print(f"  prompt : {prompt}")
-        run_hybrid(planner, seeker, args.cpacs, prompt,
-                   max_turns=args.max_turns,
-                   image_dir=Path(args.image_dir))
+        run_hybrid(
+            planner,
+            seeker,
+            args.cpacs,
+            prompt,
+            max_turns=args.max_turns,
+            image_dir=Path(args.image_dir),
+        )
 
     if prompts is None:
         print(f"\nHybrid REPL. Planner={planner}, Seeker={seeker}. Ctrl+D to exit.")

@@ -50,11 +50,13 @@ if (
 ):
     os.environ["GEMMA_V2_RESPAWNED"] = "1"
     print(f"[gemma_agent_v2] re-launching under {_VENV_PY}", flush=True)
-    os.execv(str(_VENV_PY), [str(_VENV_PY), str(Path(__file__).resolve()), *sys.argv[1:]])
+    os.execv(
+        str(_VENV_PY), [str(_VENV_PY), str(Path(__file__).resolve()), *sys.argv[1:]]
+    )
 
 _SU2_BIN = Path.home() / ".local" / "su2" / "bin"
 if _SU2_BIN.is_dir() and str(_SU2_BIN) not in os.environ.get("PATH", ""):
-    os.environ["PATH"] = f"{_SU2_BIN}:{os.environ.get('PATH','')}"
+    os.environ["PATH"] = f"{_SU2_BIN}:{os.environ.get('PATH', '')}"
 
 # Reuse the tool registry from the v1 agent so we have one source of truth
 # for tool definitions and handlers.
@@ -83,9 +85,19 @@ def build_turn_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "properties": {
-            "thought": {"type": "string", "description": "One-sentence reason for this tool choice."},
-            "tool": {"type": "string", "enum": tool_names, "description": "Which tool to call next."},
-            "args": {"type": "object", "description": "Keyword arguments for the chosen tool."},
+            "thought": {
+                "type": "string",
+                "description": "One-sentence reason for this tool choice.",
+            },
+            "tool": {
+                "type": "string",
+                "enum": tool_names,
+                "description": "Which tool to call next.",
+            },
+            "args": {
+                "type": "object",
+                "description": "Keyword arguments for the chosen tool.",
+            },
         },
         "required": ["thought", "tool", "args"],
     }
@@ -122,9 +134,9 @@ def build_system_prompt() -> str:
         "decide your next action. When the user's question is fully answered,\n"
         'call the "report_done" tool with args = {"summary": "..."}.\n\n'
         "STRICT RULES:\n"
-        '  - Pick exactly ONE mission tool (nseg_run_mission OR aviary_run_mission), never both.\n'
+        "  - Pick exactly ONE mission tool (nseg_run_mission OR aviary_run_mission), never both.\n"
         "  - If a tool returns an error, STOP and call report_done with an explanation -- do NOT auto-recover.\n"
-        '  - Defaults: cruise Mach 0.78, AoA 2.0 deg, altitude 35,000 ft, range 1500 nmi.\n'
+        "  - Defaults: cruise Mach 0.78, AoA 2.0 deg, altitude 35,000 ft, range 1500 nmi.\n"
         '  - For "trustworthy" CL/L/D, prefer preset="workstation" (4x longer but ~4x better L/D than laptop).\n\n'
         "AVAILABLE TOOLS:\n"
         f"{_format_tool_catalogue()}\n"
@@ -143,7 +155,9 @@ def _dispatch(name: str, args: dict[str, Any]) -> Any:
         return {"error": f"{type(exc).__name__}: {exc}"}
 
 
-def run_gemma_agent(model: str, cpacs_path: str, user_prompt: str, max_turns: int = 12) -> dict[str, Any]:
+def run_gemma_agent(
+    model: str, cpacs_path: str, user_prompt: str, max_turns: int = 12
+) -> dict[str, Any]:
     import ollama
 
     client = ollama.Client()
@@ -166,7 +180,12 @@ def run_gemma_agent(model: str, cpacs_path: str, user_prompt: str, max_turns: in
     for turn in range(1, max_turns + 1):
         print(f"\n--- Turn {turn} ---", flush=True)
         try:
-            resp = client.chat(model=model, messages=messages, format=schema, options={"temperature": 0.1})
+            resp = client.chat(
+                model=model,
+                messages=messages,
+                format=schema,
+                options={"temperature": 0.1},
+            )
         except Exception as exc:
             print(f"  ollama.chat FAILED: {type(exc).__name__}: {exc}")
             return {"status": "ollama_error", "error": str(exc), "trail": trail}
@@ -177,7 +196,12 @@ def run_gemma_agent(model: str, cpacs_path: str, user_prompt: str, max_turns: in
         except json.JSONDecodeError as exc:
             print(f"  JSON parse FAILED: {exc}")
             print(f"  raw: {raw[:300]}")
-            messages.append({"role": "user", "content": "Observation: your last reply was not valid JSON. Re-emit a valid JSON object now."})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": "Observation: your last reply was not valid JSON. Re-emit a valid JSON object now.",
+                }
+            )
             continue
 
         thought = obj.get("thought", "")
@@ -191,9 +215,21 @@ def run_gemma_agent(model: str, cpacs_path: str, user_prompt: str, max_turns: in
         messages.append({"role": "assistant", "content": raw})
 
         if tool == "report_done":
-            summary = args.get("summary") or args.get("final_summary") or "(no summary provided)"
+            summary = (
+                args.get("summary")
+                or args.get("final_summary")
+                or "(no summary provided)"
+            )
             print(f"\n=== FINAL ===\n{summary}")
-            trail.append({"turn": turn, "thought": thought, "tool": tool, "args": args, "result": {"done": True}})
+            trail.append(
+                {
+                    "turn": turn,
+                    "thought": thought,
+                    "tool": tool,
+                    "args": args,
+                    "result": {"done": True},
+                }
+            )
             return {"status": "done", "summary": summary, "trail": trail}
 
         result = _dispatch(tool, args)
@@ -201,23 +237,50 @@ def run_gemma_agent(model: str, cpacs_path: str, user_prompt: str, max_turns: in
         preview = result_str[:300]
         print(f"  result:  {preview}")
 
-        trail.append({"turn": turn, "thought": thought, "tool": tool, "args": args, "result": result})
+        trail.append(
+            {
+                "turn": turn,
+                "thought": thought,
+                "tool": tool,
+                "args": args,
+                "result": result,
+            }
+        )
 
         # Truncate huge results before feeding back to the model
-        feedback = result_str if len(result_str) < 2500 else result_str[:2500] + "...(truncated)"
-        messages.append({"role": "user", "content": f"Observation: {feedback}\n\nEmit your next JSON action."})
+        feedback = (
+            result_str
+            if len(result_str) < 2500
+            else result_str[:2500] + "...(truncated)"
+        )
+        messages.append(
+            {
+                "role": "user",
+                "content": f"Observation: {feedback}\n\nEmit your next JSON action.",
+            }
+        )
 
     print("\n(agent stopped: max_turns reached)")
     return {"status": "max_turns", "trail": trail}
 
 
 def _parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--model", default="gemma3:4b",
-                   help="Ollama model id. gemma3:4b is the default for this structured-output fallback; the script also works with gemma3:12b. Prefer gemma_agent.py with gemma4:e4b for production.")
-    p.add_argument("--cpacs", default="D150_v30.xml", help="Path to the CPACS XML file.")
-    p.add_argument("--prompt", default=None,
-                   help="User prompt (one-shot). If omitted, drops into an interactive REPL.")
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    p.add_argument(
+        "--model",
+        default="gemma3:4b",
+        help="Ollama model id. gemma3:4b is the default for this structured-output fallback; the script also works with gemma3:12b. Prefer gemma_agent.py with gemma4:e4b for production.",
+    )
+    p.add_argument(
+        "--cpacs", default="D150_v30.xml", help="Path to the CPACS XML file."
+    )
+    p.add_argument(
+        "--prompt",
+        default=None,
+        help="User prompt (one-shot). If omitted, drops into an interactive REPL.",
+    )
     p.add_argument("--max-turns", type=int, default=12)
     return p.parse_args()
 
@@ -252,7 +315,9 @@ def main() -> int:
     print(f"[gemma_agent_v2] tools: {', '.join(TOOLS.keys())}")
     if args.prompt is None:
         return _repl(args.model, args.cpacs, args.max_turns)
-    result = run_gemma_agent(args.model, args.cpacs, args.prompt, max_turns=args.max_turns)
+    result = run_gemma_agent(
+        args.model, args.cpacs, args.prompt, max_turns=args.max_turns
+    )
     return 0 if result.get("status") == "done" else 1
 
 

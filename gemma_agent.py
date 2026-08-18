@@ -54,8 +54,12 @@ if (
     and not _ALREADY_IN_VENV
 ):
     os.environ["GEMMA_AGENT_RESPAWNED"] = "1"
-    print(f"[gemma_agent] re-launching under {_VENV_PY} (Aviary lives here)", flush=True)
-    os.execv(str(_VENV_PY), [str(_VENV_PY), str(Path(__file__).resolve()), *sys.argv[1:]])
+    print(
+        f"[gemma_agent] re-launching under {_VENV_PY} (Aviary lives here)", flush=True
+    )
+    os.execv(
+        str(_VENV_PY), [str(_VENV_PY), str(Path(__file__).resolve()), *sys.argv[1:]]
+    )
 
 # Auto-prepend the SU2 binary directory so SU2_CFD is reachable from the agent
 _SU2_BIN = Path.home() / ".local" / "su2" / "bin"
@@ -86,8 +90,11 @@ for sub in (
 
 # Map a CPACS filename stem -> a tuple of dirs to look in first for prior runs.
 _AIRCRAFT_DIRS: dict[str, tuple[str, ...]] = {
-    "d150": ("pipeline/d150_final", "pipeline_test_2026_05_06/d150_nseg/su2_run",
-             "pipeline_test_2026_05_06/d150_aviary/su2_run"),
+    "d150": (
+        "pipeline/d150_final",
+        "pipeline_test_2026_05_06/d150_nseg/su2_run",
+        "pipeline_test_2026_05_06/d150_aviary/su2_run",
+    ),
     "canard": ("pipeline/canards_run",),
     "dlr": ("pipeline/dlr_f25_run",),
     "f25": ("pipeline/dlr_f25_run",),
@@ -224,9 +231,18 @@ def _tigl(cpacs_path: str, output_dir: str = "pipeline_output") -> dict[str, Any
                     "mach": {"type": "number", "default": 0.78},
                     "aoa": {"type": "number", "default": 2.0},
                     "altitude_ft": {"type": "number", "default": 35000.0},
-                    "step_path": {"type": "string", "description": "Optional STEP file from prior TiGL step."},
-                    "mesh_path": {"type": "string", "description": "Optional .su2 mesh file from prior run."},
-                    "output_dir": {"type": "string", "default": "pipeline_output/su2_run"},
+                    "step_path": {
+                        "type": "string",
+                        "description": "Optional STEP file from prior TiGL step.",
+                    },
+                    "mesh_path": {
+                        "type": "string",
+                        "description": "Optional .su2 mesh file from prior run.",
+                    },
+                    "output_dir": {
+                        "type": "string",
+                        "default": "pipeline_output/su2_run",
+                    },
                     "preset": {
                         "type": "string",
                         "enum": ["laptop", "workstation", "industry"],
@@ -341,7 +357,9 @@ def _su2(
         },
     },
 )
-def _pycycle(cpacs_path: str, mach: float = 0.78, altitude_ft: float = 35000.0) -> dict[str, Any]:
+def _pycycle(
+    cpacs_path: str, mach: float = 0.78, altitude_ft: float = 35000.0
+) -> dict[str, Any]:
     from pycycle_mcp import cpacs_adapter as a
 
     xml = _read_cpacs(cpacs_path)
@@ -369,9 +387,19 @@ def _pycycle(cpacs_path: str, mach: float = 0.78, altitude_ft: float = 35000.0) 
                 "type": "object",
                 "properties": {
                     "cpacs_path": {"type": "string"},
-                    "weight_kg": {"type": "number", "description": "Takeoff gross weight in kg.", "default": 78000.0},
-                    "range_nmi": {"type": "number", "description": "Cruise range in nautical miles."},
-                    "range_m": {"type": "number", "description": "Cruise range in metres."},
+                    "weight_kg": {
+                        "type": "number",
+                        "description": "Takeoff gross weight in kg.",
+                        "default": 78000.0,
+                    },
+                    "range_nmi": {
+                        "type": "number",
+                        "description": "Cruise range in nautical miles.",
+                    },
+                    "range_m": {
+                        "type": "number",
+                        "description": "Cruise range in metres.",
+                    },
                     "cruise_mach": {"type": "number", "default": 0.78},
                     "cruise_altitude_ft": {"type": "number", "default": 35000.0},
                 },
@@ -537,7 +565,9 @@ SYSTEM_PROMPT = textwrap.dedent("""\
 """)
 
 
-def run_agent(model: str, cpacs_path: str, user_prompt: str, max_turns: int = 12) -> None:
+def run_agent(
+    model: str, cpacs_path: str, user_prompt: str, max_turns: int = 12
+) -> None:
     import ollama
 
     client = ollama.Client()
@@ -623,11 +653,18 @@ GEMMA3_NOTE = (
 
 
 def _parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--model", default=DEFAULT_MODEL,
-                   help=f"Ollama model tag (default: {DEFAULT_MODEL}). Must support tool calls.")
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    p.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help=f"Ollama model tag (default: {DEFAULT_MODEL}). Must support tool calls.",
+    )
     p.add_argument("--cpacs", default="D150_v30.xml", help="CPACS file to operate on")
-    p.add_argument("--prompt", default=None, help="User request (interactive prompt if omitted)")
+    p.add_argument(
+        "--prompt", default=None, help="User request (interactive prompt if omitted)"
+    )
     p.add_argument("--max-turns", type=int, default=12)
     return p.parse_args()
 
