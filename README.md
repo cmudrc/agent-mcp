@@ -117,7 +117,7 @@ python agent-mcp/hybrid_agent.py --cpacs D150_v30.xml
 `agent-mcp` auto-relaunches under that `.venv` if you accidentally run
 it under your system Python.
 
-## How to use the six MCPs with the Gemma agent
+## How to use the five MCPs with the Gemma agent
 
 Every MCP exposes its solver as a single OpenAI-shaped function spec
 that Gemma routes to natively. The agent does NOT hardcode a pipeline;
