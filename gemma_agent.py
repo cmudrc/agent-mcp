@@ -96,16 +96,17 @@ _AIRCRAFT_DIRS: dict[str, tuple[str, ...]] = {
         "pipeline_test_2026_05_06/d150_aviary/su2_run",
     ),
     "canard": ("pipeline/canards_run",),
-    "dlr": ("pipeline/dlr_f25_run",),
-    "f25": ("pipeline/dlr_f25_run",),
     "bwb": ("pipeline/bwb_run",),
 }
+# Restricted datasets are deliberately absent from both of these maps. Auto
+# discovery must never reach a licensed dataset directory: the fallback list is
+# searched for any aircraft that does not match a key above, so an entry here
+# could attach one aircraft's geometry to another's analysis.
 _FALLBACK_DIRS = (
     "pipeline/d150_final",
     "pipeline_test_2026_05_06/d150_nseg/su2_run",
     "pipeline_test_2026_05_06/d150_aviary/su2_run",
     "pipeline/canards_run",
-    "pipeline/dlr_f25_run",
     "pipeline/bwb_run",
 )
 
