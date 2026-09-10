@@ -1,12 +1,11 @@
 # agent-mcp
 
-The **agent layer** that drives our six aircraft-analysis MCPs
+The **agent layer** that drives our five aircraft-analysis MCPs
 ([`tigl-mcp`](https://github.com/cmudrc/tigl-mcp),
 [`su2-mcp`](https://github.com/cmudrc/su2-mcp),
 [`pycycle-mcp`](https://github.com/cmudrc/pycycle-mcp),
 [`aviary-cpacs-mcp`](https://github.com/cmudrc/aviary-cpacs-mcp),
-[`nseg-mcp`](https://github.com/cmudrc/nseg-mcp), and the placeholder
-weights estimator inside `nseg-mcp`).
+[`nseg-mcp`](https://github.com/cmudrc/nseg-mcp)).
 
 This repo ships **three** interchangeable orchestrators, a multimodal
 aircraft-render helper, the iterative skills the agents follow, and a
@@ -44,7 +43,7 @@ no longer a recommended path.
             [Planner: Gemma 4 E4B]  <-- native tool-calling via Ollama
                           |
                           v
-   +---- 6 MCPs (TiGL, SU2, pyCycle, NSEG, Aviary, Weights) ----+
+   +---- 5 MCPs (TiGL, SU2, pyCycle, NSEG, Aviary) -------------+
    +-----------------------------------------------------------+
                           |
                   [SU2 produced a VTU?]
