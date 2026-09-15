@@ -233,8 +233,13 @@ def run_hybrid(
     prompt: str,
     max_turns: int = 12,
     image_dir: Path | None = None,
+    seeker_enabled: bool = True,
 ) -> None:
     """ReAct loop with a Gemma seeker inserted after every solver tool call.
+
+    ``seeker_enabled=False`` is the RQ2 ablation: the planner sees only the
+    numeric tool results and no rendered figure is produced or judged. Nothing
+    else in the loop changes, so the two settings differ only in the Seeker.
 
     Reuses gemma_agent's tool registry and chat-history bookkeeping;
     the only addition is the seeker call between the tool observation
@@ -332,7 +337,9 @@ def run_hybrid(
             # Hybrid hook: if this was a solver tool that produced a VTU,
             # render it and dispatch the Seeker.
             vtu = _find_latest_vtu(result)
-            if vtu is not None and name == "su2_run_aero":
+            if vtu is not None and name == "su2_run_aero" and not seeker_enabled:
+                print("  >>>   seeker disabled (ablation): no render, no verdict")
+            if vtu is not None and name == "su2_run_aero" and seeker_enabled:
                 print(f"  >>>   rendering 3-panel composite from {vtu} for Seeker...")
                 png_path = image_dir / f"turn{turn:02d}_{name}.png"
                 try:
@@ -402,6 +409,12 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument("--max-turns", type=int, default=8)
     p.add_argument(
+        "--no-seeker",
+        action="store_true",
+        help="Ablation (RQ2): never render or call the Seeker; the planner sees "
+        "only the numeric tool results.",
+    )
+    p.add_argument(
         "--image-dir",
         default="hybrid_seeker_renders",
         help="Where to write the seeker's rendered PNGs",
@@ -434,7 +447,7 @@ def main() -> int:
         return 1
 
     planner = _ensure_pulled(args.planner, fallback=DEFAULT_PLANNER_FALLBACK)
-    seeker = _ensure_pulled(args.seeker)
+    seeker = "disabled (ablation)" if args.no_seeker else _ensure_pulled(args.seeker)
 
     if args.prompt:
         prompts = [args.prompt]
@@ -454,6 +467,7 @@ def main() -> int:
             prompt,
             max_turns=args.max_turns,
             image_dir=Path(args.image_dir),
+            seeker_enabled=not args.no_seeker,
         )
 
     if prompts is None:
