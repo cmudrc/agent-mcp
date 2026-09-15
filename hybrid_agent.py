@@ -302,7 +302,6 @@ def run_hybrid(
             print("  (no tool call -- planner ended)")
             print(f"\n(agent stopped: planner ended on turn {turn} without report_done)")
             return
-            break
 
         for tc in tool_calls:
             fn = tc["function"] if isinstance(tc, dict) else tc.function
