@@ -300,6 +300,8 @@ def run_hybrid(
         tool_calls = msg.get("tool_calls") or []
         if not tool_calls:
             print("  (no tool call -- planner ended)")
+            print(f"\n(agent stopped: planner ended on turn {turn} without report_done)")
+            return
             break
 
         for tc in tool_calls:
