@@ -211,14 +211,29 @@ def _tigl(cpacs_path: str, output_dir: str = "pipeline_output") -> dict[str, Any
     new_xml, summary = a.run_adapter(xml, output_dir=output_dir)
     _save_cpacs(cpacs_path, new_xml)
     summary.pop("step_bytes", None)
-    # The artifact this tool exists to produce is the STEP path, and the next
-    # tool call needs it verbatim. Returned first, ahead of the component
-    # inventory: when it was last in a long response the planner fabricated a
-    # placeholder path ("STEP_from_tigl") in 7 of 8 logged runs instead of
-    # copying the real one.
-    if "step_path" in summary:
-        summary = {"step_path": summary["step_path"], **summary}
-    return summary
+    step_path = summary.get("step_path")
+    if not step_path:
+        # The adapter reports an unavailable CAD kernel honestly, but returning
+        # its summary as a success hid that: the planner saw a success-shaped
+        # response with no path and invented one ("STEP_from_tigl") in 7 of 8
+        # logged runs, and the CFD server then refused a file that never
+        # existed. A tool that produced no artifact must say so.
+        return {
+            "error": {
+                "type": "geometry_export_failed",
+                "message": (
+                    "No STEP geometry was produced "
+                    f"(step_source={summary.get('step_source', 'unknown')!r}). "
+                    "CAD export needs either the native TiGL bindings or the "
+                    "Docker image tigl-mcp:dev with Docker running. Downstream "
+                    "CFD cannot run without this file, and no path is returned."
+                ),
+                "step_source": summary.get("step_source"),
+            }
+        }
+    # The path is what the next call needs, so it leads the response rather
+    # than trailing a long component inventory.
+    return {"step_path": step_path, **summary}
 
 
 @tool(
