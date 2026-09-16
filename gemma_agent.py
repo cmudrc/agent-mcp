@@ -211,6 +211,13 @@ def _tigl(cpacs_path: str, output_dir: str = "pipeline_output") -> dict[str, Any
     new_xml, summary = a.run_adapter(xml, output_dir=output_dir)
     _save_cpacs(cpacs_path, new_xml)
     summary.pop("step_bytes", None)
+    # The artifact this tool exists to produce is the STEP path, and the next
+    # tool call needs it verbatim. Returned first, ahead of the component
+    # inventory: when it was last in a long response the planner fabricated a
+    # placeholder path ("STEP_from_tigl") in 7 of 8 logged runs instead of
+    # copying the real one.
+    if "step_path" in summary:
+        summary = {"step_path": summary["step_path"], **summary}
     return summary
 
 
