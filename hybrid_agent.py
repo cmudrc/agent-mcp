@@ -234,6 +234,7 @@ def run_hybrid(
     max_turns: int = 12,
     image_dir: Path | None = None,
     seeker_enabled: bool = True,
+    trace_path: Path | None = None,
 ) -> None:
     """ReAct loop with a Gemma seeker inserted after every solver tool call.
 
@@ -247,6 +248,20 @@ def run_hybrid(
     """
     image_dir = image_dir or Path("hybrid_seeker_renders")
     image_dir.mkdir(exist_ok=True)
+
+    def trace(record: dict[str, Any]) -> None:
+        """Append one JSON line per planner turn and tool call, untruncated.
+
+        The console prints cut arguments at 160 characters, which is too short
+        to audit a design-variable list against the CPACS file afterwards.
+        """
+        if trace_path is None:
+            return
+        record["t"] = round(time.time(), 3)
+        with open(trace_path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, default=str) + "\n")
+
+    trace({"event": "start", "planner": planner_model, "cpacs": cpacs, "prompt": prompt})
 
     tools = [spec["schema"] for spec in planner_mod.TOOLS.values()]
     handlers = {n: spec["handler"] for n, spec in planner_mod.TOOLS.items()}
@@ -278,6 +293,7 @@ def run_hybrid(
 
     for turn in range(1, max_turns + 1):
         print(f"\n--- Turn {turn} [planner={planner_model}] ---")
+        t_planner = time.time()
         resp = ollama.chat(
             model=planner_model,
             messages=messages,
@@ -289,6 +305,15 @@ def run_hybrid(
         thought = msg.get("content", "") or ""
         if thought.strip():
             print(f"  Planner: {thought[:200]}")
+        trace(
+            {
+                "event": "planner",
+                "turn": turn,
+                "content": thought,
+                "tool_calls": msg.get("tool_calls"),
+                "wall_s": round(time.time() - t_planner, 2),
+            }
+        )
         messages.append(
             {
                 "role": "assistant",
@@ -301,6 +326,7 @@ def run_hybrid(
         if not tool_calls:
             print("  (no tool call -- planner ended)")
             print(f"\n(agent stopped: planner ended on turn {turn} without report_done)")
+            trace({"event": "end", "turn": turn, "reason": "planner ended without report_done"})
             return
 
         for tc in tool_calls:
@@ -313,6 +339,7 @@ def run_hybrid(
                 except json.JSONDecodeError:
                     args = {}
             print(f"  CALL  {name}({json.dumps(args)[:160]})")
+            t_tool = time.time()
             try:
                 result = (
                     handlers[name](**args)
@@ -322,6 +349,16 @@ def run_hybrid(
             except Exception as e:
                 result = {"error": f"{type(e).__name__}: {e}"}
             print(f"  ←     {json.dumps(result, default=str)[:200]}")
+            trace(
+                {
+                    "event": "tool",
+                    "turn": turn,
+                    "name": name,
+                    "args": args,
+                    "result": result,
+                    "wall_s": round(time.time() - t_tool, 2),
+                }
+            )
             messages.append(
                 {
                     "role": "tool",
@@ -333,6 +370,7 @@ def run_hybrid(
             if isinstance(result, dict) and result.get("done"):
                 print("\n=== FINAL (planner) ===")
                 print(result.get("final_summary", "(no summary)"))
+                trace({"event": "end", "turn": turn, "reason": "report_done"})
                 return
 
             # Hybrid hook: if this was a solver tool that produced a VTU,
@@ -383,6 +421,7 @@ def run_hybrid(
                         }
                     )
 
+    trace({"event": "end", "turn": max_turns, "reason": "max_turns reached"})
     print("\n(agent stopped: max_turns reached)")
 
 
@@ -419,6 +458,12 @@ def _parse_args() -> argparse.Namespace:
         "--image-dir",
         default="hybrid_seeker_renders",
         help="Where to write the seeker's rendered PNGs",
+    )
+    p.add_argument(
+        "--trace-jsonl",
+        default=None,
+        help="Append every planner turn and tool call (full arguments and "
+        "results) as JSON lines to this file.",
     )
     return p.parse_args()
 
@@ -469,6 +514,7 @@ def main() -> int:
             max_turns=args.max_turns,
             image_dir=Path(args.image_dir),
             seeker_enabled=not args.no_seeker,
+            trace_path=Path(args.trace_jsonl) if args.trace_jsonl else None,
         )
 
     if prompts is None:

@@ -75,6 +75,7 @@ for sub in (
     "pycycle-mcp/src",
     "nseg-mcp/src",
     "aviary-cpacs-mcp/src",
+    "openaerostruct-mcp/src",
 ):
     p = _PROJECT_ROOT / sub
     if p.is_dir() and str(p) not in sys.path:
@@ -507,6 +508,207 @@ def _aviary(
     return summary
 
 
+def _num(value: Any) -> Any:
+    """Coerce a number the model may have sent as a string; leave None alone."""
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return value
+
+
+_OAS_DESIGN_VARIABLES = (
+    "alpha",
+    "twist",
+    "chord",
+    "taper",
+    "sweep",
+    "span",
+    "dihedral",
+)
+
+
+@tool(
+    "run_openaerostruct",
+    {
+        "type": "function",
+        "function": {
+            "name": "run_openaerostruct",
+            "description": (
+                "Run OpenAeroStruct vortex-lattice aerodynamics on the wing in the "
+                "CPACS file at ONE flight point (mach, altitude_m) and ONE angle of "
+                "attack. Returns CL, CD (induced + viscous, wave optional), L/D and "
+                "CM. With design_variables and target_cl it instead minimises CD "
+                "subject to CL = target_cl (SLSQP) over any of alpha, twist, chord, "
+                "taper, sweep, span, dihedral; every design variable needs bounds. "
+                "Wing geometry (span, chords, sweep, dihedral, twist, section t/c) is "
+                "read from CPACS, never from arguments. It does NOT do structures, "
+                "wing weight, fuel burn, load cases or multi-point objectives and "
+                "returns a structured error if asked. An alpha sweep is one call "
+                "per alpha."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cpacs_path": {"type": "string"},
+                    "alpha_deg": {
+                        "type": "number",
+                        "description": (
+                            "Angle of attack in degrees. Required: CPACS states no "
+                            "attitude. For an optimisation with alpha as a design "
+                            "variable this is the starting value."
+                        ),
+                    },
+                    "mach": {
+                        "type": "number",
+                        "description": "Freestream Mach. Required unless the CPACS file has a cruise segment.",
+                    },
+                    "altitude_m": {
+                        "type": "number",
+                        "description": "Altitude in metres (ISA). Required unless the CPACS file has a cruise segment.",
+                    },
+                    "target_cl": {
+                        "type": "number",
+                        "description": "Lift-coefficient equality constraint for an optimisation. Requires design_variables.",
+                    },
+                    "design_variables": {
+                        "type": "array",
+                        "description": (
+                            "Optimisation design variables, each {name, lower, upper}. "
+                            "twist and chord are arrays of num_control_points B-spline "
+                            "control points (twist in deg, chord as a scale factor)."
+                        ),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string",
+                                    "enum": list(_OAS_DESIGN_VARIABLES),
+                                },
+                                "lower": {"type": "number"},
+                                "upper": {"type": "number"},
+                            },
+                            "required": ["name", "lower", "upper"],
+                        },
+                    },
+                    "num_control_points": {
+                        "type": "integer",
+                        "description": "Control points per twist/chord design variable.",
+                        "default": 3,
+                    },
+                    "with_viscous": {"type": "boolean", "default": True},
+                    "with_wave": {"type": "boolean", "default": False},
+                    "compressible": {"type": "boolean", "default": False},
+                    "thickness_to_chord": {
+                        "type": "number",
+                        "description": "Only if the CPACS wing has no airfoil points; otherwise t/c comes from the file.",
+                    },
+                    "max_thickness_position": {
+                        "type": "number",
+                        "description": "x/c of maximum thickness, only if the CPACS wing has no airfoil points.",
+                    },
+                    "num_spanwise": {
+                        "type": "integer",
+                        "description": "Spanwise nodes across the full span, odd.",
+                        "default": 31,
+                    },
+                    "num_chordwise": {"type": "integer", "default": 5},
+                },
+                "required": ["cpacs_path", "alpha_deg"],
+            },
+        },
+    },
+)
+def _openaerostruct(
+    cpacs_path: str,
+    alpha_deg: float,
+    mach: float | None = None,
+    altitude_m: float | None = None,
+    target_cl: float | None = None,
+    design_variables: list[dict[str, Any]] | str | None = None,
+    num_control_points: int = 3,
+    with_viscous: bool = True,
+    with_wave: bool = False,
+    compressible: bool = False,
+    thickness_to_chord: float | None = None,
+    max_thickness_position: float | None = None,
+    num_spanwise: int = 31,
+    num_chordwise: int = 5,
+) -> dict[str, Any]:
+    from openaerostruct_mcp import cpacs_adapter as a
+
+    if isinstance(design_variables, str):
+        try:
+            design_variables = json.loads(design_variables)
+        except json.JSONDecodeError:
+            return {
+                "error": {
+                    "type": "invalid_input",
+                    "message": "design_variables must be a list of {name, lower, upper} objects.",
+                }
+            }
+    if design_variables:
+        design_variables = [
+            {**dv, "lower": _num(dv.get("lower")), "upper": _num(dv.get("upper"))}
+            if isinstance(dv, dict)
+            else dv
+            for dv in design_variables
+        ]
+
+    request = {
+        "alpha_deg": _num(alpha_deg),
+        "mach": _num(mach),
+        "altitude_m": _num(altitude_m),
+        "target_cl": _num(target_cl),
+        "design_variables": design_variables or None,
+        "num_control_points": int(num_control_points),
+        "with_viscous": bool(with_viscous),
+        "with_wave": bool(with_wave),
+        "compressible": bool(compressible),
+        "thickness_to_chord": _num(thickness_to_chord),
+        "max_thickness_position": _num(max_thickness_position),
+        "num_spanwise": int(num_spanwise),
+        "num_chordwise": int(num_chordwise),
+    }
+    request = {k: v for k, v in request.items() if v is not None}
+
+    xml = _read_cpacs(cpacs_path)
+    new_xml, summary = a.run_adapter(xml, request)
+    summary = dict(summary)
+    summary.pop("lift_distribution", None)
+
+    if not summary.get("success"):
+        # Same rule as the geometry tool: no result, so the error leads and no
+        # coefficient is offered as if it were one. When an optimisation ran
+        # but did not converge, the adapter's last evaluated point travels
+        # under a name that says what it is.
+        err = summary.get("error") or {
+            "type": "solver_failure",
+            "message": "OpenAeroStruct produced no result and gave no reason.",
+        }
+        out: dict[str, Any] = {"error": err, "solver": "openaerostruct"}
+        if summary.get("optimization"):
+            out["last_evaluated_point_not_an_optimum"] = {
+                k: summary.get(k)
+                for k in ("CL", "CD", "alpha_deg", "design_variables", "optimization")
+            }
+        return out
+
+    _save_cpacs(cpacs_path, new_xml)
+    # The coefficients are what the request was for, so they lead.
+    return {
+        "CL": summary.get("CL"),
+        "CD": summary.get("CD"),
+        "L_over_D": summary.get("L_over_D"),
+        "alpha_deg": summary.get("alpha_deg"),
+        "mode": summary.get("mode"),
+        **summary,
+    }
+
+
 @tool(
     "report_done",
     {
@@ -535,14 +737,16 @@ def _done(summary: str) -> dict[str, Any]:
 SYSTEM_PROMPT = textwrap.dedent("""\
     You are the *Planner* in an agentic aircraft-analysis pipeline.
     The user gives you a design or analysis question in plain English.
-    You translate it into a sequence of tool calls against six MCP tools:
+    You translate it into a sequence of tool calls against seven MCP tools:
 
       1. tigl_export_geometry       -- CPACS -> STEP CAD geometry
       2. su2_run_aero               -- Euler / RANS aerodynamics (CL, CD, L/D)
       3. pycycle_run_engine         -- turbofan cycle (TSFC, Fn, OPR, BPR)
       4. nseg_run_mission           -- fast Breguet segment-based mission
       5. aviary_run_mission         -- NASA Aviary trajectory-coupled mission
-      6. report_done                -- final summary; ends the loop
+      6. run_openaerostruct         -- vortex-lattice wing aero: CL, CD, L/D at
+                                       one alpha, or CD minimisation at a target CL
+      7. report_done                -- final summary; ends the loop
 
     All tools share a single CPACS XML file as the data store. Each tool
     reads its inputs from CPACS and writes its outputs back into CPACS.
@@ -561,6 +765,13 @@ SYSTEM_PROMPT = textwrap.dedent("""\
         fix, restart). Do NOT silently swap to a different tool.
       * Do not call the same tool twice in a row with the same arguments;
         if it failed once it will fail again.
+      * Use `run_openaerostruct` for wing-only aerodynamics questions
+        (lift, drag, L/D, drag minimisation at a target CL). It reads the
+        wing from CPACS and takes the flight point (mach, altitude_m) and
+        alpha as arguments; one flight point and one alpha per call.
+      * If the request needs something no tool provides, do not substitute
+        a different analysis for it. Run what the tools can do, and say in
+        report_done exactly which part could not be done and why.
 
     Defaults:
       * For the D150 reference aircraft, takeoff weight is ~78000 kg.
