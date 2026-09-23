@@ -1,0 +1,70 @@
+"""The CFD tool names the defaults it applied and passes forces through.
+
+RQ3 (2026-09-21): with the Mach number omitted from the request, the planner
+called the tool without it, the default 0.78 applied silently, and the report
+never named Mach. The tool now says which flight-condition inputs it filled.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import gemma_agent as g  # noqa: E402
+
+
+def _handler():
+    return g.TOOLS["su2_run_aero"]["handler"]
+
+
+def _patch(monkeypatch, captured):
+    import su2_mcp.cpacs_adapter as a
+
+    def fake_run_adapter(_xml, flight_conditions=None, **kw):
+        captured["fc"] = flight_conditions
+        return "<cpacs/>", {
+            "solver": "su2_cfd",
+            "CL": 0.178,
+            "CD": 0.74,
+            "L_over_D": 0.2405,
+            "lift_force_N": 1807.6,
+            "force_basis": "coefficient x ISA dynamic pressure ...",
+        }
+
+    monkeypatch.setattr(a, "run_adapter", fake_run_adapter)
+    monkeypatch.setattr(g, "_read_cpacs", lambda _p: "<cpacs/>")
+    monkeypatch.setattr(g, "_save_cpacs", lambda *_a, **_k: None)
+    monkeypatch.setattr(g, "_find_existing_artifact", lambda *_a, **_k: None)
+
+
+def test_omitted_mach_is_named_and_defaulted(monkeypatch):
+    captured: dict = {}
+    _patch(monkeypatch, captured)
+    out = _handler()(cpacs_path="canards.xml", aoa=2.0, altitude_ft=10000.0)
+    assert out["flight_condition_defaults_applied"] == ["mach"]
+    assert captured["fc"] == {"mach": 0.78, "aoa": 2.0, "altitude_ft": 10000.0}
+    assert list(out)[0] == "flight_condition_defaults_applied"
+
+
+def test_fully_stated_condition_applies_no_default(monkeypatch):
+    captured: dict = {}
+    _patch(monkeypatch, captured)
+    out = _handler()(cpacs_path="canards.xml", mach=0.6, aoa=2.0, altitude_ft=35000.0)
+    assert out["flight_condition_defaults_applied"] == []
+    assert captured["fc"]["mach"] == 0.6
+
+
+def test_forces_pass_through_from_the_adapter(monkeypatch):
+    _patch(monkeypatch, {})
+    out = _handler()(cpacs_path="canards.xml")
+    assert out["flight_condition_defaults_applied"] == ["mach", "aoa", "altitude_ft"]
+    assert out["lift_force_N"] == 1807.6
+    assert "ISA" in out["force_basis"]
+
+
+def test_schema_describes_the_new_fields():
+    desc = g.TOOLS["su2_run_aero"]["schema"]["function"]["description"]
+    assert "lift_force_N" in desc
+    assert "flight_condition_defaults_applied" in desc

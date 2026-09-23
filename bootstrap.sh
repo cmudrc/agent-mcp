@@ -113,7 +113,6 @@ REPOS=(
     "agentic-bench"
     "aircraft-analysis"
     "aviary-cpacs-mcp"
-    "mission-mcp"
     "nseg-mcp"
     "pycycle-mcp"
     "su2-mcp"

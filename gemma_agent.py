@@ -237,6 +237,9 @@ def _tigl(cpacs_path: str, output_dir: str = "pipeline_output") -> dict[str, Any
     return {"step_path": step_path, **summary}
 
 
+SU2_FLIGHT_DEFAULTS = {"mach": 0.78, "aoa": 2.0, "altitude_ft": 35000.0}
+
+
 @tool(
     "su2_run_aero",
     {
@@ -246,7 +249,12 @@ def _tigl(cpacs_path: str, output_dir: str = "pipeline_output") -> dict[str, Any
             "description": (
                 "Run SU2 Euler / RANS aerodynamic analysis on the current "
                 "CPACS aircraft. Returns CL, CD, and L/D at the given Mach "
-                "and angle of attack."
+                "and angle of attack, plus lift_force_N and drag_force_N "
+                "(the coefficients dimensionalised with the ISA dynamic "
+                "pressure at altitude_ft and the reference area stated in "
+                "the CPACS file; force_basis says so). Any of mach, aoa, "
+                "altitude_ft that the caller leaves out is filled by the "
+                "listed default and named in flight_condition_defaults_applied."
             ),
             "parameters": {
                 "type": "object",
@@ -311,9 +319,9 @@ def _tigl(cpacs_path: str, output_dir: str = "pipeline_output") -> dict[str, Any
 )
 def _su2(
     cpacs_path: str,
-    mach: float = 0.78,
-    aoa: float = 2.0,
-    altitude_ft: float = 35000.0,
+    mach: float | None = None,
+    aoa: float | None = None,
+    altitude_ft: float | None = None,
     step_path: str | None = None,
     mesh_path: str | None = None,
     output_dir: str = "pipeline_output/su2_run",
@@ -323,6 +331,19 @@ def _su2(
     farfield_factor: float | None = None,
 ) -> dict[str, Any]:
     from su2_mcp import cpacs_adapter as a
+
+    # RQ3 (2026-09-21): with the Mach number left out of the request, the
+    # planner called this tool without it, the default applied, and the
+    # report never named the Mach number. A default that fills a flight
+    # condition is now named in the response, so the report can be checked
+    # against it.
+    stated = {"mach": mach, "aoa": aoa, "altitude_ft": altitude_ft}
+    defaults_applied = [k for k, v in stated.items() if v is None]
+    mach = SU2_FLIGHT_DEFAULTS["mach"] if mach is None else mach
+    aoa = SU2_FLIGHT_DEFAULTS["aoa"] if aoa is None else aoa
+    altitude_ft = (
+        SU2_FLIGHT_DEFAULTS["altitude_ft"] if altitude_ft is None else altitude_ft
+    )
 
     # Auto-discover an existing mesh/STEP if the agent didn't pass one.
     # Prefer artifacts from the same aircraft (filename match) so we don't
@@ -355,7 +376,8 @@ def _su2(
     _save_cpacs(cpacs_path, new_xml)
     summary.setdefault("_used_mesh", mesh_path)
     summary.setdefault("_used_step", step_path)
-    return summary
+    # Leads the response so a default-filled input is the first thing read.
+    return {"flight_condition_defaults_applied": defaults_applied, **summary}
 
 
 @tool(
