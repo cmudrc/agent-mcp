@@ -60,7 +60,7 @@ OK "  python: $((& $python --version)) at $python"
 # ---------- 2. clone repos -------------------------------------------------
 $repos = @(
     "agent-mcp", "agentic-bench", "aircraft-analysis", "aviary-cpacs-mcp",
-    "mission-mcp", "nseg-mcp", "pycycle-mcp", "su2-mcp", "tigl-mcp"
+    "nseg-mcp", "pycycle-mcp", "su2-mcp", "tigl-mcp"
 )
 if (-not $SkipClone) {
     Info "Step 2/7: cloning cmudrc repos..."
@@ -93,7 +93,7 @@ $venvPy = Join-Path ".venv" "Scripts\python.exe"
 
 $editable = @()
 foreach ($pkg in @("tigl-mcp", "su2-mcp", "pycycle-mcp", "nseg-mcp",
-                   "aviary-cpacs-mcp", "mission-mcp", "shared_cpacs",
+                   "aviary-cpacs-mcp", "shared_cpacs",
                    "agent-mcp", "agentic-bench")) {
     if (Test-Path (Join-Path $pkg "pyproject.toml")) {
         $editable += @("-e", ".\$pkg")
