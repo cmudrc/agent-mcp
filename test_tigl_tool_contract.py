@@ -55,3 +55,21 @@ def test_step_path_leads_the_response(monkeypatch, tmp_path):
     out = _handler()(cpacs_path=str(tmp_path / "x.xml"), output_dir=str(tmp_path))
     assert next(iter(out)) == "step_path"
     assert out["step_path"] == "pipeline_output/aircraft_fused.step"
+
+
+def test_empty_output_dir_means_the_default(monkeypatch, tmp_path):
+    seen = {}
+
+    def fake_run_adapter(_xml, output_dir=None):
+        seen["output_dir"] = output_dir
+        return "<cpacs/>", {"step_path": f"{output_dir}/aircraft_fused.step", "step_source": "docker"}
+
+    import tigl_mcp.cpacs_adapter as a
+
+    monkeypatch.setattr(a, "run_adapter", fake_run_adapter)
+    monkeypatch.setattr(g, "_read_cpacs", lambda _p: "<cpacs/>")
+    monkeypatch.setattr(g, "_save_cpacs", lambda *_a, **_k: None)
+    monkeypatch.chdir(tmp_path)
+    out = _handler()(cpacs_path="x.xml", output_dir="")
+    assert seen["output_dir"] == "pipeline_output"
+    assert out["step_path"].startswith("pipeline_output/")

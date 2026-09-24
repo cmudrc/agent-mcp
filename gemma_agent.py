@@ -207,6 +207,12 @@ def tool(name: str, schema: dict[str, Any]) -> Callable:
 def _tigl(cpacs_path: str, output_dir: str = "pipeline_output") -> dict[str, Any]:
     from tigl_mcp import cpacs_adapter as a
 
+    # RQ3 bounds tier (2026-09-23): the planner passed output_dir="" in three
+    # of three repeats of one prompt; the adapter treats an empty directory as
+    # "do not export" and the run died at the geometry step for no physical
+    # reason. An empty or missing directory means the default.
+    if not output_dir or not str(output_dir).strip():
+        output_dir = "pipeline_output"
     xml = _read_cpacs(cpacs_path)
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     new_xml, summary = a.run_adapter(xml, output_dir=output_dir)
