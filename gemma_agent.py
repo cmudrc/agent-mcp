@@ -156,6 +156,14 @@ def _find_existing_artifact(suffix: str, cpacs_path: str | None = None) -> str |
 
 TOOLS: dict[str, dict[str, Any]] = {}
 
+# STEP files the geometry tool exported in this process, keyed by the CPACS
+# file they came from. Found on a fresh clone (2026-09-24): the historical
+# directories above exist only on the development machine, so with a natural
+# prompt that did not spell out the path the CFD tool could not find the STEP
+# file the geometry tool had written seconds earlier. Same process, same CPACS
+# file is the one pairing that cannot attach another aircraft's geometry.
+_EXPORTED_STEP: dict[str, str] = {}
+
 
 def _read_cpacs(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
@@ -238,6 +246,7 @@ def _tigl(cpacs_path: str, output_dir: str = "pipeline_output") -> dict[str, Any
                 "step_source": summary.get("step_source"),
             }
         }
+    _EXPORTED_STEP[str(Path(cpacs_path).resolve())] = str(step_path)
     # The path is what the next call needs, so it leads the response rather
     # than trailing a long component inventory.
     return {"step_path": step_path, **summary}
@@ -357,14 +366,20 @@ def _su2(
     # When the user asks for a non-laptop preset OR a custom surface
     # density, force a fresh mesh from the STEP so we actually exercise
     # the requested density.
+    exported = _EXPORTED_STEP.get(str(Path(cpacs_path).resolve()))
+    if exported is not None and not Path(exported).is_file():
+        exported = None
     if preset != "laptop" or surface_density is not None:
         mesh_path = None
         if step_path is None:
-            step_path = _find_existing_artifact(".step", cpacs_path)
+            step_path = exported or _find_existing_artifact(".step", cpacs_path)
     elif mesh_path is None and step_path is None:
-        mesh_path = _find_existing_artifact(".su2", cpacs_path)
-        if mesh_path is None:
-            step_path = _find_existing_artifact(".step", cpacs_path)
+        if exported is not None:
+            step_path = exported
+        else:
+            mesh_path = _find_existing_artifact(".su2", cpacs_path)
+            if mesh_path is None:
+                step_path = _find_existing_artifact(".step", cpacs_path)
 
     xml = _read_cpacs(cpacs_path)
     fc = {"mach": mach, "aoa": aoa, "altitude_ft": altitude_ft}

@@ -13,7 +13,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import pytest
+
 import gemma_agent as g  # noqa: E402
+
+# The OpenAeroStruct server is not yet published; on a clone without it this
+# module skips as a whole rather than failing.
+pytest.importorskip("openaerostruct_mcp")
 
 
 def _handler():

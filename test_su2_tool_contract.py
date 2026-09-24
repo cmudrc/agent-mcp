@@ -68,3 +68,33 @@ def test_schema_describes_the_new_fields():
     desc = g.TOOLS["su2_run_aero"]["schema"]["function"]["description"]
     assert "lift_force_N" in desc
     assert "flight_condition_defaults_applied" in desc
+
+
+def test_step_exported_in_this_process_is_used_without_a_path(monkeypatch, tmp_path):
+    """Fresh clone, 2026-09-24: the geometry tool wrote a STEP and the CFD tool
+    could not find it because discovery only knew historical directories."""
+    step = tmp_path / "aircraft_fused.step"
+    step.write_text("ISO-10303-21;")
+    cpacs = tmp_path / "x.xml"
+    cpacs.write_text("<cpacs/>")
+
+    import tigl_mcp.cpacs_adapter as ta
+
+    monkeypatch.setattr(
+        ta, "run_adapter", lambda _xml, output_dir=None: ("<cpacs/>", {"step_path": str(step), "step_source": "docker"})
+    )
+    captured: dict = {}
+    _patch(monkeypatch, captured)
+
+    import su2_mcp.cpacs_adapter as sa
+
+    def fake_su2(_xml, flight_conditions=None, step_path=None, mesh_path=None, **kw):
+        captured["step_path"] = step_path
+        captured["mesh_path"] = mesh_path
+        return "<cpacs/>", {"solver": "su2_cfd", "CL": 0.1, "CD": 0.01}
+
+    monkeypatch.setattr(sa, "run_adapter", fake_su2)
+    g.TOOLS["tigl_export_geometry"]["handler"](cpacs_path=str(cpacs), output_dir=str(tmp_path))
+    _handler()(cpacs_path=str(cpacs), mach=0.78, aoa=2.0)
+    assert captured["step_path"] == str(step)
+    assert captured["mesh_path"] is None

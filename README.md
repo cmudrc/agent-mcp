@@ -1,5 +1,7 @@
 # agent-mcp
 
+> **New here?** [RUN_THE_PIPELINE.md](RUN_THE_PIPELINE.md) takes you from an empty directory to a running pipeline and agent, every command verified on a fresh clone.
+
 The **agent layer** that drives our five aircraft-analysis MCPs
 ([`tigl-mcp`](https://github.com/cmudrc/tigl-mcp),
 [`su2-mcp`](https://github.com/cmudrc/su2-mcp),

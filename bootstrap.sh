@@ -8,14 +8,14 @@
 #   2. Clone all required cmudrc repos next to this script (skipped if
 #      already present).
 #   3. Create a project-local .venv and pip-install every MCP package
-#      (tigl-mcp, su2-mcp, pycycle-mcp, nseg-mcp, aviary-cpacs-mcp,
-#      mission-mcp), the shared CPACS manager, and agent-mcp itself,
-#      all in editable mode.
+#      (tigl-mcp, su2-mcp, pycycle-mcp, nseg-mcp, aviary-cpacs-mcp),
+#      the shared CPACS manager, and agent-mcp itself, all in editable
+#      mode.
 #   4. Install SU2 (via su2-mcp/scripts/install_su2.sh -- conda preferred,
 #      falls back to binary download).
 #   5. Install Ollama (rootless) and pull the default Gemma model.
-#   6. Run a sanity check (su2_run_aero on a stub adapter call, plus a
-#      one-shot Ollama ping).
+#   6. Run a sanity check: import every MCP package and report any that
+#      fail. Nothing is solved and nothing is stubbed at this step.
 #   7. (default) Launch the Gemma agent in REPL mode against the bundled
 #      D150 example so the user can immediately ask aircraft-analysis
 #      questions in natural language.
@@ -158,7 +158,7 @@ python -m pip install \
     "ollama" "pillow" "lxml" "pyyaml" >/dev/null
 
 EDITABLE_PKGS=()
-for pkg in tigl-mcp su2-mcp pycycle-mcp nseg-mcp aviary-cpacs-mcp mission-mcp shared_cpacs agent-mcp agentic-bench; do
+for pkg in tigl-mcp su2-mcp pycycle-mcp nseg-mcp aviary-cpacs-mcp shared_cpacs agent-mcp agentic-bench; do
     if [ -d "$pkg" ] && [ -f "$pkg/pyproject.toml" ]; then
         EDITABLE_PKGS+=("-e" "./$pkg")
     fi
