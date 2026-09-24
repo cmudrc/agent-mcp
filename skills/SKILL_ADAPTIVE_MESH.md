@@ -2,6 +2,7 @@
 
 **Date:** 2026-05-20
 **Status:** Design + minimal harness; awaits sign-off before being baked into the agent's default skill set.
+**Note (2026-09):** superseded for converged delivery by `SKILL_OPEN_ENDED_MESH.md`, whose rungs are defined on cells across the chord. The three presets and this stopping rule remain valid; the preset ladder alone did not reach the plateau on any of the paper's geometries.
 **Audience:** Chris (CMU); reference for the next Gemma agent release.
 
 ## What this skill does

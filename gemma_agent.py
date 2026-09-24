@@ -326,6 +326,17 @@ SU2_FLIGHT_DEFAULTS = {"mach": 0.78, "aoa": 2.0, "altitude_ft": 35000.0}
                             "laptop/workstation, 15.0 for industry)."
                         ),
                     },
+                    "surface_size_m": {
+                        "type": "number",
+                        "description": (
+                            "Absolute surface cell size in metres. Use this to "
+                            "define a refinement rung by cells across the wing "
+                            "chord (size = reference length / N) instead of by "
+                            "surface_density, which is span-based and leaves an "
+                            "airliner's chord under-resolved. Takes precedence "
+                            "over surface_density; halve it per rung."
+                        ),
+                    },
                 },
                 "required": ["cpacs_path"],
             },
@@ -344,6 +355,7 @@ def _su2(
     cl_convergence_eps: float | None = None,
     surface_density: int | None = None,
     farfield_factor: float | None = None,
+    surface_size_m: float | None = None,
 ) -> dict[str, Any]:
     from su2_mcp import cpacs_adapter as a
 
@@ -369,7 +381,7 @@ def _su2(
     exported = _EXPORTED_STEP.get(str(Path(cpacs_path).resolve()))
     if exported is not None and not Path(exported).is_file():
         exported = None
-    if preset != "laptop" or surface_density is not None:
+    if preset != "laptop" or surface_density is not None or surface_size_m is not None:
         mesh_path = None
         if step_path is None:
             step_path = exported or _find_existing_artifact(".step", cpacs_path)
@@ -393,6 +405,7 @@ def _su2(
         cl_convergence_eps=cl_convergence_eps,
         surface_density=surface_density,
         farfield_factor=farfield_factor,
+        surface_size_m=surface_size_m,
     )
     _save_cpacs(cpacs_path, new_xml)
     summary.setdefault("_used_mesh", mesh_path)

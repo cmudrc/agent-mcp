@@ -159,7 +159,7 @@ inspect the chosen tool sequence in the printed trace.
 | "Get me a TSFC at cruise" (single-tool)             | `pycycle_run_engine` -> `report_done`                                      |
 | "Block fuel for a 1500 nmi mission" (multi-tool)    | `su2_run_aero` -> `pycycle_run_engine` -> `nseg_run_mission` -> `report_done` |
 | "Trajectory-coupled mission" (multi-tool)           | `su2_run_aero` -> `pycycle_run_engine` -> `aviary_run_mission` -> `report_done` |
-| "Deliver a converged CFD result" (skill loop)       | `su2_run_aero` x N at increasing `surface_density` (see open-ended skill)  |
+| "Deliver a converged CFD result" (skill loop)       | `su2_run_aero` x N at halving `surface_size_m` (see open-ended skill)      |
 | "Re-mesh from STEP and re-run" (multi-tool)         | `tigl_export_geometry` -> `su2_run_aero` -> `report_done`                  |
 
 ## Skills (where the iterative judgment lives)
@@ -170,13 +170,19 @@ markdown trail of every decision.
 
 - [`skills/SKILL_ADAPTIVE_MESH.md`](skills/SKILL_ADAPTIVE_MESH.md)
   Preset-ladder mesh refinement (`laptop` -> `workstation` ->
-  `industry`) until CL plateaus within 1 %.
+  `industry`) until CL and CD change by less than 1 % between rungs.
+  The original spec; the presets still exist and the hybrid agent still
+  allows one escalation, but for a converged result use the next skill.
 - [`skills/SKILL_OPEN_ENDED_MESH.md`](skills/SKILL_OPEN_ENDED_MESH.md)
-  **New (2026-06-21).** Open-ended `surface_density` escalation
-  (30 -> 60 -> 120 -> 240 -> ...) for delivering a *converged* SU2
-  result on new geometry. Honours hard wall-clock + cell-count caps.
-  Deterministic counterpart for non-LLM users:
-  [`scripts/run_converged_su2.py`](https://github.com/cmudrc/aircraft-analysis/blob/main/scripts/run_converged_su2.py).
+  Open-ended refinement ladder for delivering a *converged* SU2 result
+  on new geometry, same 1 % rule, hard wall-clock and cell-count caps.
+  **Updated 2026-09:** define the rung by cells across the wing chord
+  (`surface_size_m`, halved per rung), not by the span-based
+  `surface_density` (30 -> 60 -> 120 -> ...). The span-based ladder left
+  an airliner's chord under-resolved and never plateaued in the paper's
+  runs; the chord-defined ladder converges as expected. Deterministic
+  counterpart for non-LLM users:
+  [`scripts/run_converged_su2.py --chord-cells-start N`](https://github.com/cmudrc/aircraft-analysis/blob/main/scripts/run_converged_su2.py).
 - [`skills/SKILL_AOA_SWEEP.md`](skills/SKILL_AOA_SWEEP.md)
   **New (2026-06-22).** Mesh once, sweep angle of attack, and report the
   best-L/D angle and the trim angle for a target CL (interpolated). The

@@ -32,6 +32,23 @@ If in doubt, run the preset-ladder skill first; if it ends with
 `status: "no_plateau_within_budget"`, the agent should *automatically*
 hand off to this skill starting from the last preset's density.
 
+## How a rung is defined (updated 2026-09)
+
+`surface_density` sizes the surface cells as a fraction of the wingspan
+(`char_near = span / surface_density`). On the paper's airliner that left
+only 4 to 39 cells across the mean chord over five rungs, the lift climbed
+on every rung, and no ladder reached the plateau within a laptop or a
+twelve-hour server budget. Define the rung on the chord instead: pass
+`surface_size_m = ref_length / N` with N cells across the reference chord
+(start at N = 20 on a laptop) and halve the size on each rung. The
+`su2_run_aero` tool and the adapter both accept `surface_size_m`, which
+takes precedence over `surface_density`; the harness flag is
+`--chord-cells-start N`. On the D150 the chord-defined ladder's lift change
+fell 31 -> 17 -> 8 % per doubling and the finest value agreed with an
+independent vortex-lattice estimate within 3 %. The stopping rule below is
+unchanged. The `surface_density` ladder is kept for small test bodies and
+for reproducing the earlier runs.
+
 ## Inputs
 
 ```text
