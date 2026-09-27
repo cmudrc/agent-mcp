@@ -164,6 +164,14 @@ TOOLS: dict[str, dict[str, Any]] = {}
 # file is the one pairing that cannot attach another aircraft's geometry.
 _EXPORTED_STEP: dict[str, str] = {}
 
+# Successive CFD runs on the same CPACS file at the same flight condition in
+# this process, so the tool can report the refinement plateau itself. RQ3
+# (2026-09-23): asked to judge the plateau, the planner reported the solver's
+# inner `converged` flag as the 1 % plateau in every repeat. The judgement
+# belongs in the tool, computed from the solver's own coefficients.
+_RUNG_HISTORY: dict[str, list[dict[str, Any]]] = {}
+PLATEAU_TOL = 0.01
+
 
 def _read_cpacs(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
@@ -269,7 +277,12 @@ SU2_FLIGHT_DEFAULTS = {"mach": 0.78, "aoa": 2.0, "altitude_ft": 35000.0}
                 "pressure at altitude_ft and the reference area stated in "
                 "the CPACS file; force_basis says so). Any of mach, aoa, "
                 "altitude_ft that the caller leaves out is filled by the "
-                "listed default and named in flight_condition_defaults_applied."
+                "listed default and named in flight_condition_defaults_applied. "
+                "On a refinement ladder the 'refinement' field compares this "
+                "run with the previous run at the same flight condition and "
+                "states plateau_met (both coefficients within 1 percent and "
+                "the solver's Cauchy criterion fired); report that field, do "
+                "not judge the plateau yourself."
             ),
             "parameters": {
                 "type": "object",
@@ -410,8 +423,57 @@ def _su2(
     _save_cpacs(cpacs_path, new_xml)
     summary.setdefault("_used_mesh", mesh_path)
     summary.setdefault("_used_step", step_path)
+    refinement = _refinement_status(cpacs_path, fc, summary)
     # Leads the response so a default-filled input is the first thing read.
-    return {"flight_condition_defaults_applied": defaults_applied, **summary}
+    return {
+        "flight_condition_defaults_applied": defaults_applied,
+        "refinement": refinement,
+        **summary,
+    }
+
+
+def _refinement_status(
+    cpacs_path: str, fc: dict[str, float], summary: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Compare this run with the previous run on the same file and flight
+    condition, and state whether the 1 % plateau rule is met. None when the
+    run produced no coefficients."""
+    cl, cd = summary.get("CL"), summary.get("CD")
+    if not isinstance(cl, (int, float)) or not isinstance(cd, (int, float)):
+        return None
+    key = f"{Path(cpacs_path).resolve()}|{fc['mach']}|{fc['aoa']}|{fc['altitude_ft']}"
+    hist = _RUNG_HISTORY.setdefault(key, [])
+    prev = hist[-1] if hist else None
+    rec: dict[str, Any] = {
+        "rung": len(hist) + 1,
+        "mesh_n_elem": summary.get("mesh_n_elem"),
+        "CL": cl,
+        "CD": cd,
+        "cauchy_triggered": bool(summary.get("cauchy_triggered")),
+    }
+    hist.append(rec)
+    out: dict[str, Any] = {
+        "rung": rec["rung"],
+        "plateau_rule": (
+            f"|dCL|/|CL| < {PLATEAU_TOL:.0%} and |dCD|/|CD| < {PLATEAU_TOL:.0%} "
+            "against the previous rung, and cauchy_triggered on this rung"
+        ),
+    }
+    if prev is None:
+        out["plateau_met"] = None
+        out["note"] = "first rung at this flight condition; no previous rung to compare"
+        return out
+    dcl = abs(cl - prev["CL"]) / abs(cl) if cl else float("inf")
+    dcd = abs(cd - prev["CD"]) / abs(cd) if cd else float("inf")
+    out.update(
+        {
+            "previous_rung": {"mesh_n_elem": prev["mesh_n_elem"], "CL": prev["CL"], "CD": prev["CD"]},
+            "dCL_rel_pct": round(100 * dcl, 2),
+            "dCD_rel_pct": round(100 * dcd, 2),
+            "plateau_met": bool(dcl < PLATEAU_TOL and dcd < PLATEAU_TOL and rec["cauchy_triggered"]),
+        }
+    )
+    return out
 
 
 @tool(

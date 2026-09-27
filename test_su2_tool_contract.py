@@ -120,3 +120,40 @@ def test_surface_size_m_reaches_the_adapter_and_forces_a_fresh_mesh(monkeypatch,
     assert captured["mesh_path"] is None  # a stale mesh must not be reused for a new rung
     assert captured["step_path"] == "old.step"
     assert "surface_size_m" in g.TOOLS["su2_run_aero"]["schema"]["function"]["parameters"]["properties"]
+
+
+def test_refinement_plateau_is_judged_by_the_tool(monkeypatch):
+    """RQ3 budget test: the planner read the solver's inner converged flag as the
+    1 % plateau. The tool now states plateau_met from its own coefficients."""
+    import su2_mcp.cpacs_adapter as sa
+
+    runs = iter(
+        [
+            {"solver": "su2_cfd", "CL": 0.178, "CD": 0.740, "mesh_n_elem": 41985, "cauchy_triggered": True},
+            {"solver": "su2_cfd", "CL": 0.214, "CD": 0.759, "mesh_n_elem": 99045, "cauchy_triggered": True},
+            {"solver": "su2_cfd", "CL": 0.2145, "CD": 0.7595, "mesh_n_elem": 280342, "cauchy_triggered": True},
+        ]
+    )
+    monkeypatch.setattr(sa, "run_adapter", lambda _xml, **kw: ("<cpacs/>", next(runs)))
+    monkeypatch.setattr(g, "_read_cpacs", lambda _p: "<cpacs/>")
+    monkeypatch.setattr(g, "_save_cpacs", lambda *_a, **_k: None)
+    monkeypatch.setattr(g, "_find_existing_artifact", lambda *_a, **_k: None)
+    g._RUNG_HISTORY.clear()
+    kw = dict(cpacs_path="ladder.xml", mach=0.78, aoa=2.0, altitude_ft=35000.0)
+    r1 = _handler()(surface_density=30, **kw)["refinement"]
+    r2 = _handler()(surface_density=60, **kw)["refinement"]
+    r3 = _handler()(surface_density=120, **kw)["refinement"]
+    assert r1["rung"] == 1 and r1["plateau_met"] is None
+    assert r2["rung"] == 2 and r2["plateau_met"] is False and r2["dCL_rel_pct"] == 16.82
+    assert r3["rung"] == 3 and r3["plateau_met"] is True
+
+
+def test_no_refinement_field_without_coefficients(monkeypatch):
+    import su2_mcp.cpacs_adapter as sa
+
+    monkeypatch.setattr(sa, "run_adapter", lambda _xml, **kw: ("<cpacs/>", {"solver": "su2_cfd", "error": {"type": "solver_failure"}}))
+    monkeypatch.setattr(g, "_read_cpacs", lambda _p: "<cpacs/>")
+    monkeypatch.setattr(g, "_save_cpacs", lambda *_a, **_k: None)
+    monkeypatch.setattr(g, "_find_existing_artifact", lambda *_a, **_k: None)
+    out = _handler()(cpacs_path="x.xml", mach=0.78, aoa=2.0, altitude_ft=35000.0)
+    assert out["refinement"] is None
