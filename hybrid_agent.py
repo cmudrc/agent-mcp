@@ -222,13 +222,23 @@ def run_seeker(
         "numerical context to ground your verdict. Respond ONLY with the "
         "requested JSON object."
     )
+    # The reference hint used to describe a transonic narrowbody. Every RQ2
+    # run was on the canard test body, so the Seeker was told what the wrong
+    # aircraft should look like; the guidance is now aircraft-agnostic.
     user_text = (
         f"Numerical context from the planner:\n"
         f"{json.dumps(context, indent=2)}\n\n"
-        f"For reference, a transonic narrowbody at this flight point should "
-        f"show clear suction (Cp ≲ -1.0) on the upper wing and ~0.5 to 0.8 "
-        f"stagnation on the leading edge. Field ranges much smaller than "
-        f"this hint at an under-resolved mesh.\n\n"
+        f"Guidance, independent of aircraft type: a resolved compressible "
+        f"solution shows a smooth stagnation band near the leading edge, a "
+        f"coherent suction region on the lifting surface, and colour that "
+        f"varies smoothly except at shocks. Blotchy or faceted colour that "
+        f"follows the mesh triangles, or a Cp range far narrower than the "
+        f"context suggests, indicates an under-resolved surface. Judge the "
+        f"mesh from the figure together with mesh_n_elem, cauchy_triggered "
+        f"and the refinement comparison in the context, not from the flight "
+        f"condition alone. cauchy_triggered true means the solver's lift "
+        f"settled within its iteration budget; false means it did not, "
+        f"which favours needs_finer_mesh.\n\n"
         f"Return the JSON verdict now."
     )
     t0 = time.time()
@@ -293,20 +303,29 @@ def _find_latest_vtu(observation: dict) -> Path | None:
 def _seeker_context_from(observation: dict, tool_name: str) -> dict:
     """Distil the planner's numeric state into a small dict for the seeker."""
     keep = {}
+    # Until 2026-09-28 this filtered on lowercase keys (cl, cd, l_over_d,
+    # n_iters, wall_time_s) that the CFD tool has never returned, so the
+    # Seeker judged every figure without the coefficients, the cell count
+    # or the convergence flags. The RQ2 pairs of 2026-09-16 ran with that
+    # surface; the keys below are the ones the tool actually returns.
     for k in (
         "mach",
         "aoa_deg",
         "altitude_ft",
         "preset",
         "iter_cap",
-        "cl",
-        "cd",
-        "l_over_d",
-        "n_iters",
-        "wall_time_s",
+        "CL",
+        "CD",
+        "L_over_D",
+        "runtime_seconds",
+        "cauchy_triggered",
         "mesh_source",
+        "mesh_n_elem",
+        "mesh_surface_density",
+        "mesh_surface_size_m",
+        "refinement",
     ):
-        if isinstance(observation, dict) and k in observation:
+        if isinstance(observation, dict) and observation.get(k) is not None:
             keep[k] = observation[k]
     keep["tool"] = tool_name
     return keep

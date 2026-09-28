@@ -424,6 +424,13 @@ def _su2(
     summary.setdefault("_used_mesh", mesh_path)
     summary.setdefault("_used_step", step_path)
     refinement = _refinement_status(cpacs_path, fc, summary)
+    # The adapter's "converged" flag means only "CL and CD were parsed from
+    # the solver output"; on the RQ3 budget test the planner read it as the
+    # refinement plateau ("Plateau Met: Yes (Converged: true)"). The planner
+    # sees it under a name that says what it is.
+    if "converged" in summary:
+        summary = dict(summary)
+        summary["coefficients_parsed"] = summary.pop("converged")
     # Leads the response so a default-filled input is the first thing read.
     return {
         "flight_condition_defaults_applied": defaults_applied,

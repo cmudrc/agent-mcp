@@ -157,3 +157,22 @@ def test_no_refinement_field_without_coefficients(monkeypatch):
     monkeypatch.setattr(g, "_find_existing_artifact", lambda *_a, **_k: None)
     out = _handler()(cpacs_path="x.xml", mach=0.78, aoa=2.0, altitude_ft=35000.0)
     assert out["refinement"] is None
+
+
+def test_converged_is_renamed_for_the_planner(monkeypatch):
+    """The adapter's 'converged' means only that CL/CD were parsed; the RQ3
+    budget test showed the planner reading it as the refinement plateau."""
+    import su2_mcp.cpacs_adapter as sa
+
+    monkeypatch.setattr(
+        sa,
+        "run_adapter",
+        lambda _xml, **kw: ("<cpacs/>", {"solver": "su2_cfd", "CL": 0.1, "CD": 0.01, "converged": True}),
+    )
+    monkeypatch.setattr(g, "_read_cpacs", lambda _p: "<cpacs/>")
+    monkeypatch.setattr(g, "_save_cpacs", lambda *_a, **_k: None)
+    monkeypatch.setattr(g, "_find_existing_artifact", lambda *_a, **_k: None)
+    g._RUNG_HISTORY.clear()
+    out = _handler()(cpacs_path="x.xml", mach=0.78, aoa=2.0, altitude_ft=35000.0)
+    assert "converged" not in out
+    assert out["coefficients_parsed"] is True
