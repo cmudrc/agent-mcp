@@ -375,7 +375,13 @@ su2-mcp --transport streamable-http --host 127.0.0.1 --port 8000
 ```
 
 `tigl-mcp`, `pycycle-mcp`, `nseg-mcp` and `aviary-cpacs-mcp` take the same
-flags. The agent in §7 does not go through this transport: it calls the same
+flags. A complete, verified example that drives the geometry and CFD
+servers end to end over their endpoints alone (open the CPACS file, export
+STEP, mesh at the laptop sizing, run SU2, read lift and drag from the
+history) is [examples/mcp_endpoints_d150.py](examples/mcp_endpoints_d150.py);
+it also documents the two integration traps: the base64 content arguments
+and the fact that the named presets live in the adapter, with
+`surface_density` as their endpoint equivalent. The agent in §7 does not go through this transport: it calls the same
 adapters in-process through identical typed schemas, which is faster and
 leaves the transport out of the experiments.
 
