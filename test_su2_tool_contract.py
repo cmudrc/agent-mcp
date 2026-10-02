@@ -176,3 +176,16 @@ def test_converged_is_renamed_for_the_planner(monkeypatch):
     out = _handler()(cpacs_path="x.xml", mach=0.78, aoa=2.0, altitude_ft=35000.0)
     assert "converged" not in out
     assert out["coefficients_parsed"] is True
+
+
+def test_export_flow_field_returns_real_file_or_error(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    out = g.TOOLS["export_flow_field"]["handler"](cpacs_path="x.xml")
+    assert out["error"]["type"] == "missing_artifact"
+    run = tmp_path / "pipeline_output" / "su2_run"
+    run.mkdir(parents=True)
+    vtu = run / "vol_solution.vtu"
+    vtu.write_bytes(b"<VTKFile/>" * 10)
+    out = g.TOOLS["export_flow_field"]["handler"](cpacs_path="x.xml")
+    assert out["flow_field_vtu"] == str(vtu.resolve())
+    assert out["size_bytes"] == vtu.stat().st_size

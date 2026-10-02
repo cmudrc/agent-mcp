@@ -140,7 +140,17 @@ export PATH="$HOME/.local/su2/bin:$PATH"
 SU2_CFD --help | head -3
 ```
 
-Put the `export PATH=...` line in your shell profile. **Forgetting it is the
+Put the `export PATH=...` line in your shell profile.
+
+**Parallel SU2.** The downloaded binary is serial, which is why fine meshes
+take hours. The runner launches SU2 in parallel automatically when it can
+prove it is safe: `mpirun` on PATH and an MPI-capable binary (a
+`SU2_CFD_MPI` sibling, or a binary that links an MPI library). Set
+`SU2_MPI_RANKS=N` to pin the rank count (`1` forces serial; unset means all
+cores). To get an MPI binary, build SU2 from source with
+`-Dwith-mpi=enabled` (meson) against OpenMPI, or install a cluster module;
+running N copies of a *serial* binary would silently repeat the same case N
+times, so the runner refuses to do that and says why in `launch_reason`. **Forgetting it is the
 most common cause of an apparently broken run**: the SU2 tool then returns a
 `missing_binary` error naming the install page, and nothing downstream can
 run. On Windows, SU2 runs inside WSL2 only.

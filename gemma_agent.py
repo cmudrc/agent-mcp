@@ -36,6 +36,7 @@ import argparse
 import json
 import os
 import sys
+import time
 import textwrap
 from pathlib import Path
 from typing import Any, Callable
@@ -835,6 +836,121 @@ def _openaerostruct(
 
 
 @tool(
+    "export_flow_field",
+    {
+        "type": "function",
+        "function": {
+            "name": "export_flow_field",
+            "description": (
+                "Return the path of the 3D flow-field file (VTU, openable in "
+                "ParaView) and the surface flow file from the most recent SU2 "
+                "run on this CPACS file. Use when the user asks for the 3D "
+                "flow field, the solution file, or a visualisation file. "
+                "Returns an error if no run has produced one."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cpacs_path": {"type": "string"},
+                    "output_dir": {
+                        "type": "string",
+                        "description": "Directory of the SU2 run to look in.",
+                        "default": "pipeline_output/su2_run",
+                    },
+                },
+                "required": ["cpacs_path"],
+            },
+        },
+    },
+)
+def _export_flow_field(
+    cpacs_path: str, output_dir: str = "pipeline_output/su2_run"
+) -> dict[str, Any]:
+    """Hand the user the real solver artifacts; never synthesise one."""
+    base = Path(output_dir)
+    roots = [base] if base.is_dir() else []
+    roots += [p for p in Path("pipeline_output").glob("su2_run*") if p.is_dir()]
+    candidates: list[Path] = []
+    for root in roots:
+        candidates += list(root.glob("*.vtu"))
+    if not candidates:
+        return {
+            "error": {
+                "type": "missing_artifact",
+                "message": (
+                    "No flow-field file exists yet. Run su2_run_aero first; "
+                    "each run writes vol_solution.vtu into its output "
+                    "directory."
+                ),
+            }
+        }
+    newest = max(candidates, key=lambda p: p.stat().st_mtime)
+    out: dict[str, Any] = {
+        "flow_field_vtu": str(newest.resolve()),
+        "size_bytes": newest.stat().st_size,
+        "produced": time.strftime(
+            "%Y-%m-%d %H:%M:%S", time.localtime(newest.stat().st_mtime)
+        ),
+        "open_with": "ParaView or any VTK viewer",
+    }
+    surf = newest.parent / "surface_flow.vtu"
+    if surf.exists():
+        out["surface_flow_vtu"] = str(surf.resolve())
+    return out
+
+
+@tool(
+    "render_flow_image",
+    {
+        "type": "function",
+        "function": {
+            "name": "render_flow_image",
+            "description": (
+                "Render the three-view surface-pressure image (PNG) from the "
+                "most recent SU2 flow field, for the user to look at. "
+                "Returns the image path. Requires a prior su2_run_aero."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cpacs_path": {"type": "string"},
+                    "output_path": {
+                        "type": "string",
+                        "default": "pipeline_output/flow_render.png",
+                    },
+                },
+                "required": ["cpacs_path"],
+            },
+        },
+    },
+)
+def _render_flow_image(
+    cpacs_path: str, output_path: str = "pipeline_output/flow_render.png"
+) -> dict[str, Any]:
+    found = _export_flow_field(cpacs_path)
+    if "error" in found:
+        return found
+    sys.path.insert(0, str(_PROJECT_ROOT / "scripts"))
+    from render_aircraft_views import render_composite
+
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    info = render_composite(
+        vtu_path=Path(found["flow_field_vtu"]),
+        out_path=out,
+        field="Pressure_Coefficient",
+        caption=Path(found["flow_field_vtu"]).parent.name,
+    )
+    return {
+        "image_png": str(out.resolve()),
+        "surface_cells": info.get("surface_cells"),
+        "field": "Pressure_Coefficient",
+        "field_range": list(info.get("field_range", ())),
+        "source_vtu": found["flow_field_vtu"],
+    }
+
+
+@tool(
     "report_done",
     {
         "type": "function",
@@ -862,7 +978,7 @@ def _done(summary: str) -> dict[str, Any]:
 SYSTEM_PROMPT = textwrap.dedent("""\
     You are the *Planner* in an agentic aircraft-analysis pipeline.
     The user gives you a design or analysis question in plain English.
-    You translate it into a sequence of tool calls against seven MCP tools:
+    You translate it into a sequence of tool calls against nine MCP tools:
 
       1. tigl_export_geometry       -- CPACS -> STEP CAD geometry
       2. su2_run_aero               -- Euler / RANS aerodynamics (CL, CD, L/D)
@@ -871,7 +987,11 @@ SYSTEM_PROMPT = textwrap.dedent("""\
       5. aviary_run_mission         -- NASA Aviary trajectory-coupled mission
       6. run_openaerostruct         -- vortex-lattice wing aero: CL, CD, L/D at
                                        one alpha, or CD minimisation at a target CL
-      7. report_done                -- final summary; ends the loop
+      7. export_flow_field          -- path of the 3D flow file (VTU) from the
+                                       latest SU2 run, when the user asks for it
+      8. render_flow_image          -- three-view surface-pressure PNG from the
+                                       latest SU2 run, when the user asks to see it
+      9. report_done                -- final summary; ends the loop
 
     All tools share a single CPACS XML file as the data store. Each tool
     reads its inputs from CPACS and writes its outputs back into CPACS.
