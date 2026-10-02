@@ -141,6 +141,15 @@ async def run(prompt: str, model: str, max_turns: int, trace_path: Path | None, 
                 trace({"event": "end", "turn": turn, "reason": "final"})
                 return
             if not calls:
+                if not getattr(run, "_nudged", False):
+                    run._nudged = True  # one fair client reprompt, as an IDE would
+                    print("(empty response; nudging once)")
+                    trace({"event": "nudge", "turn": turn})
+                    messages.append({
+                        "role": "user",
+                        "content": "Continue: make the next tool call, or reply with FINAL: and your summary.",
+                    })
+                    continue
                 print("(no tool call and no text; stopping)")
                 trace({"event": "end", "turn": turn, "reason": "empty"})
                 return
