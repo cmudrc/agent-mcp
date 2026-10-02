@@ -385,7 +385,21 @@ su2-mcp --transport streamable-http --host 127.0.0.1 --port 8000
 ```
 
 `tigl-mcp`, `pycycle-mcp`, `nseg-mcp` and `aviary-cpacs-mcp` take the same
-flags. A complete, verified example that drives the geometry and CFD
+flags.
+
+**One endpoint for everything:** the `aircraft-mcp` gateway (its own
+repository folder) mounts all five servers behind a single MCP endpoint
+with namespaced tools (`tigl_*`, `su2_*`, ...), adds stage-progress events,
+an optional local dashboard (`--dashboard-port 8765`: active stage, call
+durations, the latest pressure render), and a `run_aircraft_analysis` tool
+that delegates a whole analysis to the local Gemma planner. An external
+client such as Kiro configures just this one server; ready-made
+configuration lives in `aircraft-mcp/kiro/`. To drive the gateway with the
+local model over real MCP, as an external client would:
+
+```bash
+python agent-mcp/mcp_agent.py --prompt "Open canards.xml, export the CAD, mesh at surface density 30, run the solver, report CL and CD."
+``` A complete, verified example that drives the geometry and CFD
 servers end to end over their endpoints alone (open the CPACS file, export
 STEP, mesh at the laptop sizing, run SU2, read lift and drag from the
 history) is [examples/mcp_endpoints_d150.py](examples/mcp_endpoints_d150.py);
