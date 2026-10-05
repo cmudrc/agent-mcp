@@ -369,3 +369,20 @@ def test_mode_a_client_lets_the_gateway_record_its_end(monkeypatch):
                 break
         time.sleep(0.2)
     assert kinds == ["session_start", "tool_call", "tool_result", "session_end"]
+
+
+def test_gateway_puts_su2_on_path(monkeypatch, tmp_path):
+    """Clients like Kiro start the gateway without the shell profile."""
+    import os
+
+    from aircraft_mcp import server
+
+    su2 = tmp_path / "su2bin"
+    su2.mkdir()
+    monkeypatch.setenv("AIRCRAFT_SU2_BIN", str(su2))
+    monkeypatch.setenv("PATH", "/usr/bin")
+    assert server._ensure_solver_path() == str(su2)
+    assert os.environ["PATH"].split(os.pathsep)[0] == str(su2)
+    # idempotent
+    server._ensure_solver_path()
+    assert os.environ["PATH"].split(os.pathsep).count(str(su2)) == 1

@@ -201,9 +201,10 @@ Behaviours to expect, measured in the project's tests unless marked:
 - The planner reports what the tools return and does not question it.
 - If you leave out Mach, angle or altitude, the CFD tool uses Mach 0.78,
   2 degrees and 35,000 ft and says so; the report page lists it.
-- The engine and mission tools do not say when they fill a default. The
-  mission tool uses a takeoff weight of 78,000 kg and a range of 3,000 km
-  unless you state them (checked in the code). State them.
+- The mission tools never assume a takeoff weight or a passenger count:
+  give them in your request (78,000 kg is a reasonable D150 weight), or the
+  tool refuses with `missing_input`. Range and cruise point have defaults
+  (3,000 km, Mach 0.78, 35,000 ft), and the tool names any it used.
 - The mission range you give is the cruise distance; climb and descent add
   to it (1,500 nmi asked gave 1,760.7 nm in total, tools called directly,
   2026-10-05).

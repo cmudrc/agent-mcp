@@ -292,9 +292,10 @@ segment; climb and descent add to it). The agent has not yet been run on
 this prompt with the current tools; the session report shows which tools it
 chose.
 
-State the takeoff weight and the range: the agent's mission tool otherwise
-uses 78,000 kg and 3,000 km without saying so. The CFD tool is the only one
-that names the defaults it fills.
+State the takeoff weight (and, for Aviary, the passenger count): the
+mission tools refuse rather than assume them. Defaults they do apply (range,
+cruise point) are named in each response, as the CFD tool names its flight
+condition defaults.
 
 ### Single-tool vs multi-tool use cases
 

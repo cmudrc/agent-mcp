@@ -180,12 +180,31 @@ def test_converged_is_renamed_for_the_planner(monkeypatch):
 
 def test_export_flow_field_returns_real_file_or_error(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
+    g._SU2_RUN_DIR.clear()
     out = g.TOOLS["export_flow_field"]["handler"](cpacs_path="x.xml")
     assert out["error"]["type"] == "missing_artifact"
     run = tmp_path / "pipeline_output" / "su2_run"
     run.mkdir(parents=True)
     vtu = run / "vol_solution.vtu"
     vtu.write_bytes(b"<VTKFile/>" * 10)
-    out = g.TOOLS["export_flow_field"]["handler"](cpacs_path="x.xml")
+    # An explicit run folder is honoured.
+    out = g.TOOLS["export_flow_field"]["handler"](cpacs_path="x.xml", output_dir=str(run))
     assert out["flow_field_vtu"] == str(vtu.resolve())
     assert out["size_bytes"] == vtu.stat().st_size
+
+
+def test_export_flow_field_never_returns_another_aircrafts_file(monkeypatch, tmp_path):
+    """2026-10-05: the newest VTU anywhere could belong to a different aircraft."""
+    monkeypatch.chdir(tmp_path)
+    g._SU2_RUN_DIR.clear()
+    other = tmp_path / "pipeline_output" / "su2_run_other"
+    other.mkdir(parents=True)
+    (other / "vol_solution.vtu").write_bytes(b"<VTKFile/>")
+    out = g.TOOLS["export_flow_field"]["handler"](cpacs_path="mine.xml")
+    assert out["error"]["type"] == "missing_artifact"
+    mine = tmp_path / "pipeline_output" / "su2_run_mine"
+    mine.mkdir(parents=True)
+    (mine / "vol_solution.vtu").write_bytes(b"<VTKFile/>" * 3)
+    g._SU2_RUN_DIR[str((tmp_path / "mine.xml").resolve())] = str(mine)
+    out = g.TOOLS["export_flow_field"]["handler"](cpacs_path="mine.xml")
+    assert out["flow_field_vtu"].endswith("su2_run_mine/vol_solution.vtu")

@@ -165,6 +165,12 @@ TOOLS: dict[str, dict[str, Any]] = {}
 # file is the one pairing that cannot attach another aircraft's geometry.
 _EXPORTED_STEP: dict[str, str] = {}
 
+# Output folder of the latest SU2 run per CPACS file in this process, so the
+# flow-file tools hand back THIS aircraft's result. Until 2026-10-05
+# export_flow_field returned the newest VTU anywhere under pipeline_output/,
+# which could belong to a different aircraft.
+_SU2_RUN_DIR: dict[str, str] = {}
+
 # Successive CFD runs on the same CPACS file at the same flight condition in
 # this process, so the tool can report the refinement plateau itself. RQ3
 # (2026-09-23): asked to judge the plateau, the planner reported the solver's
@@ -271,7 +277,7 @@ SU2_FLIGHT_DEFAULTS = {"mach": 0.78, "aoa": 2.0, "altitude_ft": 35000.0}
         "function": {
             "name": "su2_run_aero",
             "description": (
-                "Run SU2 Euler / RANS aerodynamic analysis on the current "
+                "Run SU2 Euler (inviscid) aerodynamic analysis on the current "
                 "CPACS aircraft. Returns CL, CD, and L/D at the given Mach "
                 "and angle of attack, plus lift_force_N and drag_force_N "
                 "(the coefficients dimensionalised with the ISA dynamic "
@@ -424,6 +430,8 @@ def _su2(
     _save_cpacs(cpacs_path, new_xml)
     summary.setdefault("_used_mesh", mesh_path)
     summary.setdefault("_used_step", step_path)
+    if summary.get("output_dir"):
+        _SU2_RUN_DIR[str(Path(cpacs_path).resolve())] = str(summary["output_dir"])
     refinement = _refinement_status(cpacs_path, fc, summary)
     # The adapter's "converged" flag means only "CL and CD were parsed from
     # the solver output"; on the RQ3 budget test the planner read it as the
@@ -539,8 +547,12 @@ def _pycycle(
                     "cpacs_path": {"type": "string"},
                     "weight_kg": {
                         "type": "number",
-                        "description": "Takeoff gross weight in kg.",
-                        "default": 78000.0,
+                        "description": (
+                            "Takeoff gross weight in kg. Pass it only if the "
+                            "user states one. Left out, the tool uses the "
+                            "takeoff mass the aircraft file states, and refuses "
+                            "with missing_input if the file states none."
+                        ),
                     },
                     "range_nmi": {
                         "type": "number",
@@ -560,30 +572,45 @@ def _pycycle(
 )
 def _nseg(
     cpacs_path: str,
-    weight_kg: float = 78000.0,
+    weight_kg: float | None = None,
     range_nmi: float | None = None,
     range_m: float | None = None,
-    cruise_mach: float = 0.78,
-    cruise_altitude_ft: float = 35000.0,
+    cruise_mach: float | None = None,
+    cruise_altitude_ft: float | None = None,
 ) -> dict[str, Any]:
     from nseg_mcp import cpacs_adapter as a
 
+    # Until 2026-10-05 this wrapper defaulted weight_kg to 78,000 kg for every
+    # aircraft, which overrode the adapter's rule (use the mass the file
+    # states, else refuse) and put an invented D150 mass on the canard body.
+    # The weight is now passed only when the caller states one. Mission
+    # parameters (range, cruise point) keep documented defaults, and every
+    # default applied is named in the response.
+    defaults_applied: list[str] = []
     if range_nmi is not None and range_m is None:
         range_m = float(range_nmi) * 1852.0
     if range_m is None:
         range_m = 3_000_000.0
+        defaults_applied.append("range_m=3000000 (3,000 km)")
+    if cruise_mach is None:
+        cruise_mach = 0.78
+        defaults_applied.append("cruise_mach=0.78")
+    if cruise_altitude_ft is None:
+        cruise_altitude_ft = 35000.0
+        defaults_applied.append("cruise_altitude_ft=35000")
     cruise_altitude_m = float(cruise_altitude_ft) / 3.28084
 
     xml = _read_cpacs(cpacs_path)
-    mp = {
-        "weight_kg": weight_kg,
+    mp: dict[str, Any] = {
         "range_m": range_m,
         "cruise_mach": cruise_mach,
         "cruise_altitude_m": cruise_altitude_m,
     }
+    if weight_kg is not None:
+        mp["weight_kg"] = weight_kg
     new_xml, summary = a.run_adapter(xml, mission_profile=mp)
     _save_cpacs(cpacs_path, new_xml)
-    return summary
+    return {"mission_defaults_applied": defaults_applied, **summary}
 
 
 @tool(
@@ -603,9 +630,19 @@ def _nseg(
                 "type": "object",
                 "properties": {
                     "cpacs_path": {"type": "string"},
-                    "range_nmi": {"type": "number", "default": 1500.0},
-                    "num_passengers": {"type": "integer", "default": 162},
-                    "cruise_mach": {"type": "number", "default": 0.785},
+                    "range_nmi": {
+                        "type": "number",
+                        "description": "Mission range; left out, 3,000 km is used and named in the response.",
+                    },
+                    "num_passengers": {
+                        "type": "integer",
+                        "description": (
+                            "Passenger count. Pass it only if the user states "
+                            "one; otherwise the tool refuses with missing_input "
+                            "rather than assume a payload."
+                        ),
+                    },
+                    "cruise_mach": {"type": "number", "default": 0.78},
                     "cruise_altitude_ft": {"type": "number", "default": 35000.0},
                 },
                 "required": ["cpacs_path"],
@@ -615,23 +652,37 @@ def _nseg(
 )
 def _aviary(
     cpacs_path: str,
-    range_nmi: float = 1500.0,
-    num_passengers: int = 162,
-    cruise_mach: float = 0.785,
-    cruise_altitude_ft: float = 35000.0,
+    range_nmi: float | None = None,
+    num_passengers: int | None = None,
+    cruise_mach: float | None = None,
+    cruise_altitude_ft: float | None = None,
 ) -> dict[str, Any]:
     from aviary_cpacs_mcp import cpacs_adapter as a
 
+    # Until 2026-10-05 this wrapper always passed 162 passengers, defeating
+    # the adapter's refusal to assume a payload, and a 1,500 nmi / Mach 0.785
+    # mission that disagreed with the adapter's documented defaults. Only
+    # stated values are passed now; the adapter's defaults are named.
+    defaults_applied: list[str] = []
+    mp: dict[str, Any] = {}
+    if range_nmi is not None:
+        mp["range_nmi"] = range_nmi
+    else:
+        defaults_applied.append("range=3000 km")
+    if num_passengers is not None:
+        mp["num_passengers"] = num_passengers
+    if cruise_mach is not None:
+        mp["cruise_mach"] = cruise_mach
+    else:
+        defaults_applied.append("cruise_mach=0.78")
+    if cruise_altitude_ft is not None:
+        mp["cruise_altitude_ft"] = cruise_altitude_ft
+    else:
+        defaults_applied.append("cruise_altitude_ft=35000")
     xml = _read_cpacs(cpacs_path)
-    mp = {
-        "range_nmi": range_nmi,
-        "num_passengers": num_passengers,
-        "cruise_mach": cruise_mach,
-        "cruise_altitude_ft": cruise_altitude_ft,
-    }
     new_xml, summary = a.run_adapter(xml, mission_profile=mp)
     _save_cpacs(cpacs_path, new_xml)
-    return summary
+    return {"mission_defaults_applied": defaults_applied, **summary}
 
 
 def _num(value: Any) -> Any:
@@ -844,9 +895,10 @@ def _openaerostruct(
             "description": (
                 "Return the path of the 3D flow-field file (VTU, openable in "
                 "ParaView) and the surface flow file from the most recent SU2 "
-                "run on this CPACS file. Use when the user asks for the 3D "
-                "flow field, the solution file, or a visualisation file. "
-                "Returns an error if no run has produced one."
+                "run on this CPACS file in this session. Use when the user "
+                "asks for the 3D flow field, the solution file, or a "
+                "visualisation file. Returns an error if this aircraft file "
+                "has no SU2 run yet."
             ),
             "parameters": {
                 "type": "object",
@@ -854,8 +906,10 @@ def _openaerostruct(
                     "cpacs_path": {"type": "string"},
                     "output_dir": {
                         "type": "string",
-                        "description": "Directory of the SU2 run to look in.",
-                        "default": "pipeline_output/su2_run",
+                        "description": (
+                            "Optional: the output folder of a specific earlier "
+                            "SU2 run to take the file from."
+                        ),
                     },
                 },
                 "required": ["cpacs_path"],
@@ -864,27 +918,30 @@ def _openaerostruct(
     },
 )
 def _export_flow_field(
-    cpacs_path: str, output_dir: str = "pipeline_output/su2_run"
+    cpacs_path: str, output_dir: str | None = None
 ) -> dict[str, Any]:
     """Hand the user the real solver artifacts; never synthesise one."""
-    base = Path(output_dir)
-    roots = [base] if base.is_dir() else []
-    roots += [p for p in Path("pipeline_output").glob("su2_run*") if p.is_dir()]
-    candidates: list[Path] = []
-    for root in roots:
-        candidates += list(root.glob("*.vtu"))
-    if not candidates:
+    run_dir = output_dir or _SU2_RUN_DIR.get(str(Path(cpacs_path).resolve()))
+    if run_dir is None:
         return {
             "error": {
                 "type": "missing_artifact",
                 "message": (
-                    "No flow-field file exists yet. Run su2_run_aero first; "
-                    "each run writes vol_solution.vtu into its output "
-                    "directory."
+                    "This aircraft file has no SU2 run in this session. Run "
+                    "su2_run_aero first, or pass the output_dir of an earlier "
+                    "run of the same aircraft."
                 ),
             }
         }
-    newest = max(candidates, key=lambda p: p.stat().st_mtime)
+    vtu = Path(run_dir) / "vol_solution.vtu"
+    if not vtu.is_file():
+        return {
+            "error": {
+                "type": "missing_artifact",
+                "message": f"No vol_solution.vtu in {run_dir}.",
+            }
+        }
+    newest = vtu
     out: dict[str, Any] = {
         "flow_field_vtu": str(newest.resolve()),
         "size_bytes": newest.stat().st_size,
@@ -981,7 +1038,7 @@ SYSTEM_PROMPT = textwrap.dedent("""\
     You translate it into a sequence of tool calls against nine MCP tools:
 
       1. tigl_export_geometry       -- CPACS -> STEP CAD geometry
-      2. su2_run_aero               -- Euler / RANS aerodynamics (CL, CD, L/D)
+      2. su2_run_aero               -- Euler (inviscid) aerodynamics (CL, CD, L/D)
       3. pycycle_run_engine         -- turbofan cycle (TSFC, Fn, OPR, BPR)
       4. nseg_run_mission           -- fast Breguet segment-based mission
       5. aviary_run_mission         -- NASA Aviary trajectory-coupled mission
@@ -1019,9 +1076,10 @@ SYSTEM_PROMPT = textwrap.dedent("""\
         report_done exactly which part could not be done and why.
 
     Defaults:
-      * For the D150 reference aircraft, takeoff weight is ~78000 kg.
-        Do NOT pass weight_kg unless the user explicitly tells you to;
-        let the tool defaults handle it.
+      * Do NOT pass weight_kg or num_passengers unless the user states
+        them. The mission tools read the takeoff mass from the aircraft
+        file and refuse with missing_input when it is not there; report
+        that refusal rather than supplying a number.
       * SU2 and TiGL artifacts (mesh, STEP) are auto-discovered from
         prior runs when present -- you do not need to specify them.
 

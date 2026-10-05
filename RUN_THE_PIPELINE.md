@@ -559,12 +559,12 @@ tools directly on fresh copies of the example files:
   mission tool refuses until both the CFD and engine runs have
   (`missing_input` naming `cd0`, `k`, `tsfc_1_per_s`, `max_thrust_n`). So
   "block fuel" needs geometry, CFD, engine and mission, in that order.
-- Unlike the CFD tool, the engine and mission tools do not name the defaults
-  they fill. The agent's mission tool uses a takeoff weight of 78,000 kg
-  (the D150's) and a range of 3,000 km unless the request states them, and
-  the result then shows `weight_source: "mission_profile:weight_kg"` as if
-  you had given it. State the weight and range. The Aviary tool defaults to
-  1,500 nmi, 162 passengers, Mach 0.785 and 35,000 ft, and uses Aviary's own
+- The mission tools never assume a takeoff weight or a passenger count.
+  Give them in the request, or the tool refuses with `missing_input` (the
+  example D150 file states no takeoff mass; 78,000 kg is a reasonable D150
+  value to give). Range and cruise point have defaults (3,000 km, Mach
+  0.78, 35,000 ft); each response lists the ones it used in
+  `mission_defaults_applied`. The Aviary tool uses Aviary's own
   aerodynamics, not the CFD result.
 - The mesh presets are `laptop` (default, about 50 k cells on the D150,
   about 40 s of meshing and solving), `workstation` (about 300 k cells,

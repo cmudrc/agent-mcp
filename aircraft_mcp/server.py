@@ -46,6 +46,26 @@ def _resolve(command: str) -> str | None:
     return None
 
 
+def _ensure_solver_path() -> str | None:
+    """Put the SU2 binaries on PATH for the servers this gateway starts.
+
+    An MCP client such as Kiro starts the gateway without the user's shell
+    profile, and the servers only inherit PATH, so the SU2 tool reported SU2
+    as missing (found 2026-10-05). AIRCRAFT_SU2_BIN names the folder;
+    otherwise ~/.local/su2/bin is used when it exists (where the project's
+    install script puts SU2).
+    """
+    import os
+
+    folder = os.environ.get("AIRCRAFT_SU2_BIN") or str(Path.home() / ".local" / "su2" / "bin")
+    if not Path(folder).is_dir():
+        return None
+    parts = os.environ.get("PATH", "").split(os.pathsep)
+    if folder not in parts:
+        os.environ["PATH"] = os.pathsep.join([folder, *parts])
+    return folder
+
+
 def build_gateway(
     state_dir: Path | None = None,
     skip: set[str] | None = None,
@@ -56,6 +76,7 @@ def build_gateway(
     The stage middleware is also reachable as ``server.stage_middleware``;
     its ``runlog`` is the gateway's session log.
     """
+    _ensure_solver_path()
     log = ProgressLog(state_dir)
     gw: FastMCP = FastMCP(
         name="aircraft-mcp",
