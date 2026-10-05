@@ -1,11 +1,11 @@
 {
   "mcpServers": {
     "aircraft": {
-      "command": "aircraft-mcp",
+      "command": "/absolute/path/to/the/project/checkout/.venv/bin/aircraft-mcp",
       "args": ["--dashboard-port", "8765"],
       "env": {
         "AIRCRAFT_MCP_PROJECT_ROOT": "/absolute/path/to/the/project/checkout",
-        "SU2_MPI_RANKS": "0"
+        "PATH": "replace with the output of: echo $PATH (in a terminal where SU2 and docker are found)"
       },
       "disabled": false,
       "autoApprove": ["gateway_status", "get_progress", "tigl_ping", "su2_get_su2_status"]

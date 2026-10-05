@@ -7,8 +7,6 @@ realised with Gemma open-weight models):
     user prompt
        v
     [Planner: Gemma 4 E4B] -- native Ollama tool-calling (laptop tier)
-       or
-    [Planner: Gemma 3 27B] -- structured-output ReAct (--use-react, server tier)
        v
     tool calls against the six aircraft-analysis MCPs
        v
@@ -24,15 +22,16 @@ realised with Gemma open-weight models):
     [Answer Agent: planner] -- final structured summary via report_done
 
 Migration note (2026-05-28): Qwen was retired as the production planner
-(Boeing integration constraint). Gemma 4 E4B is the default laptop
-planner; Gemma 3 27B is the workstation-tier option via --use-react.
+(Boeing integration constraint). Gemma 4 E4B is the default planner. The
+planner must support native tool calling in Ollama; Gemma 3 does not, so a
+Gemma 3 27B planner runs through gemma_agent_v2.py (structured output), not
+this script.
 
 Usage:
     python hybrid_agent.py --cpacs D150_v30.xml \\
         --prompt "Run SU2 on D150 at workstation preset, then have the seeker verify the mesh is converged before reporting."
 
-    python hybrid_agent.py                                 # interactive REPL
-    python hybrid_agent.py --planner gemma3:27b --use-react  # workstation tier
+    python hybrid_agent.py --cpacs D150_v30.xml           # interactive REPL
 """
 
 from __future__ import annotations
@@ -86,8 +85,8 @@ from aircraft_mcp.runlog import RunLog  # noqa: E402
 
 DEFAULT_PLANNER = "gemma4:e4b"
 # Migration note (2026-05-28): Qwen retired (Boeing integration). Gemma 4 E4B
-# is the laptop-tier planner with native tool calling. For the larger
-# Gemma 3 27B workstation planner, pass --planner gemma3:27b --use-react.
+# is the planner, with native tool calling. Gemma 3 has no native tool calling
+# in Ollama; the Gemma 3 27B planner runs through gemma_agent_v2.py.
 DEFAULT_PLANNER_FALLBACK = "gemma4:e4b"
 DEFAULT_SEEKER = "gemma4:e4b"
 

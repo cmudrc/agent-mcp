@@ -16,12 +16,13 @@
 #   5. Install Ollama (rootless) and pull the default Gemma model.
 #   6. Run a sanity check: import every MCP package and report any that
 #      fail. Nothing is solved and nothing is stubbed at this step.
-#   7. (default) Launch the Gemma agent in REPL mode against the bundled
-#      D150 example so the user can immediately ask aircraft-analysis
-#      questions in natural language.
+#   7. Copy the two example aircraft to ./D150_v30.xml and ./canards.xml
+#      (the tools write results into the file they are given), check for
+#      the TiGL Docker image (not built here), then (default) launch the
+#      Gemma agent in REPL mode on ./D150_v30.xml.
 #
 # Flags:
-#   --no-launch        Skip step 7 (set up everything, exit).
+#   --no-launch        Set up everything, but do not start the agent.
 #   --no-models        Skip step 5b (install Ollama but don't pull Gemma).
 #   --model NAME       Override the default Gemma model
 #                      (default: gemma4:e4b).
@@ -56,7 +57,7 @@ while [[ $# -gt 0 ]]; do
         --model) MODEL="$2"; shift 2 ;;
         --workdir) WORKDIR="$2"; shift 2 ;;
         -h|--help)
-            sed -n '2,30p' "$0"; exit 0 ;;
+            sed -n '2,34p' "$0"; exit 0 ;;
         *)
             echo -e "${RED}Unknown flag: $1${NC}" >&2; exit 2 ;;
     esac
@@ -152,9 +153,13 @@ source .venv/bin/activate
 
 python -m pip install --upgrade pip wheel >/dev/null
 
-# Base scientific stack required by Aviary / pyCycle / gmsh / pyvista.
+# The solver libraries the servers call, at the versions RUN_THE_PIPELINE.md
+# pins. They are not package dependencies on purpose (each server must import
+# without its solver and report the absence), so they are installed here.
+# Without om-pycycle the engine tool returns a missing-dependency error.
 python -m pip install \
     "numpy<2" "pyvista==0.48.4" "matplotlib" "gmsh==4.15.2" \
+    "openmdao==3.36.0" "om-pycycle" \
     "ollama" "pillow" "lxml" "pyyaml" >/dev/null
 
 EDITABLE_PKGS=()
@@ -243,31 +248,53 @@ if missing:
 print("  all MCP packages import OK")
 PY
 
+# ---------- working copies of the example aircraft ------------------------
+# The agent's tools write their results into the aircraft file they are given.
+# Work on copies in the project folder so the examples in aircraft-analysis
+# stay as published. Existing copies are left alone.
+for f in D150_v30.xml canards.xml; do
+    if [ ! -f "$f" ] && [ -f "aircraft-analysis/examples/$f" ]; then
+        cp "aircraft-analysis/examples/$f" "$f"
+        ok "  working copy: ./$f (from aircraft-analysis/examples/)"
+    fi
+done
+
+# The geometry tool needs Docker running and the tigl-mcp:dev image (not built
+# here: the build takes several minutes to tens of minutes).
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    if [ -z "$(docker images -q tigl-mcp:dev 2>/dev/null)" ]; then
+        warn "  Docker image tigl-mcp:dev not found. The geometry step needs it:"
+        warn "    (cd tigl-mcp && docker build --platform linux/amd64 -t tigl-mcp:dev .)"
+    else
+        ok "  Docker image tigl-mcp:dev present"
+    fi
+else
+    warn "  Docker is not running (or not installed). The geometry step needs it;"
+    warn "  start Docker Desktop, then build the image: see RUN_THE_PIPELINE.md section 4."
+fi
+
+export OPENMDAO_REPORTS=0
+
 # ---------- 7. launch ------------------------------------------------------
 if [ "$LAUNCH" -eq 1 ]; then
     info "Step 7/7: launching the Gemma agent in REPL mode..."
     info "  (type your request in plain English, e.g."
-    info "   'Run SU2 with the workstation preset on D150 at Mach 0.78 AoA 2'.)"
+    info "   'Export the geometry, then run SU2 at the laptop preset at Mach 0.78"
+    info "    and 2 degrees, and report CL, CD and L/D.'  Ctrl+D exits.)"
     info ""
-    AGENT="agent-mcp/hybrid_agent.py"
-    [ -f "$AGENT" ] || AGENT="agent-mcp/gemma_agent.py"
-    if [ -f "$AGENT" ]; then
-        CPACS=""
-        for candidate in D150_v30.xml agent-mcp/D150_v30.xml paper/D150_v30.xml; do
-            [ -f "$candidate" ] && CPACS="$candidate" && break
-        done
-        if [ -n "$CPACS" ]; then
-            python "$AGENT" --cpacs "$CPACS" --planner "$MODEL" || \
-            python "$AGENT" --cpacs "$CPACS" --model "$MODEL"
-        else
-            warn "  no D150_v30.xml found; launching agent without --cpacs."
-            python "$AGENT" --planner "$MODEL" || python "$AGENT" --model "$MODEL"
-        fi
+    CPACS="D150_v30.xml"
+    if [ ! -f "$CPACS" ]; then
+        warn "  no D150_v30.xml in $WORKDIR (did the aircraft-analysis clone fail?)."
+    elif [ -f "agent-mcp/hybrid_agent.py" ]; then
+        python agent-mcp/hybrid_agent.py --cpacs "$CPACS" --planner "$MODEL"
+    elif [ -f "agent-mcp/gemma_agent.py" ]; then
+        python agent-mcp/gemma_agent.py --cpacs "$CPACS" --model "$MODEL"
     else
         warn "  agent-mcp/{hybrid,gemma}_agent.py not found."
     fi
 else
     ok "Setup complete (--no-launch given). To start the agent later, run:"
     ok "    source .venv/bin/activate"
+    ok "    export PATH=\"\$HOME/.local/su2/bin:\$PATH\"; export OPENMDAO_REPORTS=0"
     ok "    python agent-mcp/hybrid_agent.py --cpacs D150_v30.xml --planner $MODEL"
 fi
