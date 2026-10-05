@@ -8,8 +8,12 @@ project's measured failure modes; do not relax them.
   this session. If a quantity is not in any tool response, say that no tool
   provides it.
 - State the flight condition explicitly in every analysis: Mach, angle of
-  attack, altitude. If a tool response lists entries in
-  `flight_condition_defaults_applied`, name those defaults in your summary.
+  attack, altitude. The `su2_*` tools take it from the configuration you
+  write and do not report defaults. With `run_aircraft_analysis`, the local
+  planner's CFD tool names any defaults it filled
+  (`flight_condition_defaults_applied`, in the session log at
+  `agent_session_dir`); if its report mentions defaults, repeat them in
+  your summary.
 - Geometry before aerodynamics: export CAD with `tigl_export_configuration_cad`
   before meshing or solving. If a tool returns an `error` object, report it
   and stop; do not retry with the same arguments and do not switch tools
@@ -27,10 +31,14 @@ project's measured failure modes; do not relax them.
 - `surface_density=30` is the quick laptop mesh (~1 min per case),
   80 the workstation mesh, 200 and up production-grade (minutes to hours).
 - Treat quick-mesh coefficients as smoke checks, not results. For a result,
-  refine until the `refinement.plateau_met` field from the CFD response is
-  true, and report the rung table.
-- Report `mesh_n_elem`, the preset or density, and whether
-  `cauchy_triggered` is true alongside any CL/CD you quote.
+  refine the mesh and compare CL and CD between successive meshes: the rule
+  is a change under 1 percent in both, with the solver's convergence
+  criterion met on the finer mesh. Report the rung table. (With
+  `run_aircraft_analysis`, the local planner's CFD tool computes this
+  comparison as `refinement.plateau_met`; the `su2_*` tools do not, so
+  compute it from the histories and say that you did.)
+- Report the cell count, the mesh density, and whether the solver's
+  convergence criterion fired, alongside any CL/CD you quote.
 
 ## Reporting
 - Every number in a final answer carries its source tool name.

@@ -6,10 +6,24 @@ the same session logs the local agents write.
 
 | File | Copy to (in the Kiro workspace) | What it does |
 | --- | --- | --- |
-| `mcp.json` | `.kiro/settings/mcp.json` | starts `aircraft-mcp` (set `AIRCRAFT_MCP_PROJECT_ROOT`) |
+| `mcp.json` | `.kiro/settings/mcp.json` | starts `aircraft-mcp`; replace the three placeholders: `command` (full path of `.venv/bin/aircraft-mcp`), `AIRCRAFT_MCP_PROJECT_ROOT`, and `PATH` (see below) |
 | `steering.md` | `.kiro/steering/aircraft.md` | the project's measured rules for these tools |
 | `specs/*.md` | starting text for a new spec (Kiro keeps specs in `.kiro/specs/<name>/`) | the three study questions |
 | `hooks/aircraft-session-log.json` | `.kiro/hooks/` | records prompts and tool calls (see below) |
+
+Why `PATH` is set in `mcp.json`: the gateway passes its own `PATH` to the
+servers it starts, and the SU2 server needs `~/.local/su2/bin` on it, the
+geometry server `docker`. A gateway started with the bare system `PATH`
+reported SU2 as not installed (checked on a fresh clone, 2026-10-05). Paste
+the output of `echo $PATH` from a terminal where the run guide's two
+`export` lines are set. The servers receive only `PATH`, `HOME`, `USER`,
+`LOGNAME`, `SHELL` and `TERM` from the gateway (the MCP library's default),
+so other variables set here, such as `SU2_MPI_RANKS` or `OPENMDAO_REPORTS`,
+reach the gateway but not the servers; pyCycle may therefore leave `*_out/`
+report folders in the folder the servers run in.
+
+Full setup steps, and what is and is not verified, are in
+[RUN_THE_PIPELINE.md §8](../RUN_THE_PIPELINE.md#8-running-the-servers-for-another-mcp-client-kiro-and-others).
 
 ## Hooks: recording a Kiro session
 
