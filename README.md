@@ -13,7 +13,11 @@ This repo ships **three** interchangeable orchestrators, a multimodal
 aircraft-render helper, the iterative skills the agents follow, and a
 one-command [`bootstrap.sh`](bootstrap.sh) / [`bootstrap.ps1`](bootstrap.ps1)
 installer that takes a fresh machine from zero to a running Gemma agent
-in a single command.
+in a single command. It also ships the `aircraft-mcp` gateway (all five
+servers behind one MCP endpoint, for clients such as Kiro), a session log
+of every run, and `aircraft-runs`, which turns a session log into a page
+you can read. See [Session logs](#session-logs-every-run-recorded-and-readable)
+and [The aircraft-mcp gateway](#the-aircraft-mcp-gateway-one-endpoint-for-other-mcp-clients).
 
 ## Three agents, one tool surface, one model family
 
@@ -117,6 +121,90 @@ python agent-mcp/hybrid_agent.py --cpacs D150_v30.xml
 
 `agent-mcp` auto-relaunches under that `.venv` if you accidentally run
 it under your system Python.
+
+## Session logs: every run, recorded and readable
+
+Every agent session is recorded in full: the prompt, every request sent to
+the model and every reply (with Ollama's token counts and timings), every
+tool call with its complete arguments and result, every image the Seeker
+judged with its verdict, and the final report. Each session gets its own
+folder:
+
+```
+~/aircraft-runs/20261005-171500-a1b2c3/
+    events.jsonl   one JSON object per line, in order
+    meta.json      model, aircraft file, prompt, participant, machine, package versions
+    blobs/         values longer than 20,000 characters (e.g. base64 CAD), unaltered
+    images/        the images the Seeker looked at
+    report.html    the readable view (written when the session ends)
+```
+
+The agent prints the folder path when it starts. Nothing is shortened:
+long values are moved to `blobs/<sha256>.txt` exactly as they were, and the
+event keeps a pointer to them.
+
+```bash
+aircraft-runs                 # render the newest session and the index
+aircraft-runs <session_dir>   # render one session
+aircraft-runs --all --open    # render everything and open the index
+```
+
+`report.html` is one self-contained page that works offline: the prompt,
+model, duration, token totals and outcome at the top; a bar showing where
+the time went (planner, geometry, flow solve, Seeker); then each step in
+order, with each tool call's arguments and result folded open on request.
+An "every number traced" panel lists any number in the final report that
+does not appear in a tool result or the prompt. `index.html` in the runs
+folder lists all sessions. With the gateway's dashboard running, the same
+pages are at `http://127.0.0.1:8765/sessions/`.
+
+| Variable | Effect |
+| --- | --- |
+| `AIRCRAFT_LOG=0` | turn logging off |
+| `AIRCRAFT_RUNS_DIR` | where session folders go (default `~/aircraft-runs`) |
+| `AIRCRAFT_PARTICIPANT` | a participant code, written to `meta.json` (user studies) |
+| `AIRCRAFT_LOG_REPORT=0` | do not write `report.html` at the end of a session |
+
+`hybrid_agent.py`, `gemma_agent.py`, `mcp_agent.py` and the gateway all
+write these logs. `--trace-jsonl` still writes its own file, unchanged.
+
+## The aircraft-mcp gateway: one endpoint for other MCP clients
+
+The `aircraft_mcp` package in this repository (formerly its own
+`aircraft-mcp` folder) mounts the five servers behind one MCP endpoint,
+with namespaced tools (`tigl_*`, `su2_*`, `pycycle_*`, `nseg_*`,
+`aviary_*`). Each server runs unchanged as its own subprocess; a server
+that is not installed is reported by `gateway_status`, never faked.
+Gateway-native tools:
+
+- `gateway_status`: what is mounted, what was skipped, where events go.
+- `get_progress`: recent tool calls (stage, status, duration).
+- `run_aircraft_analysis`: hand a whole analysis to the local Gemma
+  planner (`hybrid_agent.py`); returns its final report, the artifact
+  paths, and the folder of the planner's own session log. Aircraft files
+  whose path matches the restricted-dataset patterns are refused.
+
+```bash
+pip install -e ./agent-mcp                  # installs the aircraft-mcp and aircraft-runs commands
+aircraft-mcp                                # stdio (what an IDE starts)
+aircraft-mcp --dashboard-port 8765          # plus the local progress dashboard
+aircraft-mcp --transport streamable-http --port 8800
+```
+
+The dashboard (http://127.0.0.1:8765) shows the active stage, recent calls
+with durations, typical stage times labelled as estimates from this
+project's measured runs, the newest surface-pressure render, and the
+session reports. The gateway writes every call, with full arguments and
+results, to its own session folder.
+
+**Kiro.** [`kiro/`](kiro) holds a ready MCP configuration (`mcp.json`),
+the project's measured rules (`steering.md`), spec templates for the three
+study questions (`specs/`), and hook files (`hooks/`) that record Kiro's
+prompts and tool calls into the same session logs. The hook files are
+written from Kiro's documentation and are not yet verified inside Kiro;
+see [`kiro/README.md`](kiro/README.md). To drive the gateway with the
+local model over real MCP, the way an external client would, use
+`mcp_agent.py`.
 
 ## How to use the five MCPs with the Gemma agent
 

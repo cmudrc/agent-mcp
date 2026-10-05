@@ -5,7 +5,9 @@ It takes you from an empty directory to (1) a no-LLM run of the five
 engineering servers on an example aircraft and (2) the local Gemma agent
 choosing and calling the same servers from a plain-English request. Every
 command below was run on a fresh clone on 2026-09-24 (macOS, Apple silicon);
-where a step differs on Linux or Windows it says so.
+where a step differs on Linux or Windows it says so. The session-log and
+`aircraft-runs` part of §7 and the gateway part of §8 were added on
+2026-10-05 and checked on the development machine, not yet on a fresh clone.
 
 Read the short "What you are installing" first. It explains what each piece
 is, so the error messages later make sense.
@@ -359,6 +361,35 @@ python agent-mcp/hybrid_agent.py --help
 
 `agent-mcp/gemma_agent.py` is the same planner without the observer.
 
+**Every session is recorded.** When the agent starts it prints a line such
+as
+
+```
+[aircraft-runs] session log: /Users/you/aircraft-runs/20261005-212343-5a2e47
+```
+
+That folder holds the whole session: the prompt, every request sent to the
+model and every reply (with token counts and timings), every tool call with
+its full arguments and result, the images the observer judged, and the final
+report (`events.jsonl`, one JSON object per line; `meta.json`; long values
+such as base64 CAD unaltered in `blobs/`). When the session ends the agent
+writes `report.html` there, a single page you can open in any browser,
+offline. To render it yourself, or every session at once:
+
+```bash
+aircraft-runs                       # the newest session, plus ~/aircraft-runs/index.html
+aircraft-runs ~/aircraft-runs/20261005-212343-5a2e47 --open
+aircraft-runs --all
+```
+
+The page shows the prompt, model, duration, token totals and outcome, a bar
+of where the time went, each step in order (planner turns, tool calls with
+arguments and results, observer verdicts with the image), the final report,
+and a check that lists any number in the final report that no tool result
+or the prompt contains. `AIRCRAFT_LOG=0` turns logging off,
+`AIRCRAFT_RUNS_DIR` moves the folder, and `AIRCRAFT_PARTICIPANT=P01` tags a
+user-study session. `--trace-jsonl` still works as before.
+
 Things to know about the agent, all measured in the paper:
 
 - It follows the order you give. If you give none, it may call CFD before
@@ -387,27 +418,49 @@ su2-mcp --transport streamable-http --host 127.0.0.1 --port 8000
 `tigl-mcp`, `pycycle-mcp`, `nseg-mcp` and `aviary-cpacs-mcp` take the same
 flags.
 
-**One endpoint for everything:** the `aircraft-mcp` gateway (its own
-repository folder) mounts all five servers behind a single MCP endpoint
-with namespaced tools (`tigl_*`, `su2_*`, ...), adds stage-progress events,
-an optional local dashboard (`--dashboard-port 8765`: active stage, call
-durations, the latest pressure render), and a `run_aircraft_analysis` tool
-that delegates a whole analysis to the local Gemma planner. An external
-client such as Kiro configures just this one server; ready-made
-configuration lives in `aircraft-mcp/kiro/`. To drive the gateway with the
-local model over real MCP, as an external client would:
+**One endpoint for everything:** the `aircraft-mcp` gateway ships inside
+`agent-mcp` (package `aircraft_mcp`; it was a separate folder until
+2026-10-05). `pip install -e agent-mcp` in §3 installs the `aircraft-mcp`
+command. It mounts all five servers behind a single MCP endpoint with
+namespaced tools (`tigl_*`, `su2_*`, ...), adds stage-progress events, an
+optional local dashboard, and a `run_aircraft_analysis` tool that delegates
+a whole analysis to the local Gemma planner:
+
+```bash
+aircraft-mcp                               # stdio, what an IDE starts
+aircraft-mcp --dashboard-port 8765         # plus http://127.0.0.1:8765
+aircraft-mcp --transport streamable-http --port 8800
+```
+
+The dashboard shows the active stage, call durations, the latest pressure
+render, and the session reports at `/sessions/`. The gateway writes every
+call it serves, with full arguments and results, to its own session folder
+under `~/aircraft-runs`; `run_aircraft_analysis` returns the folder of the
+planner's session as `agent_session_dir`, so the two are linked.
+
+An external client such as Kiro configures just this one server.
+Ready-made Kiro files live in `agent-mcp/kiro/`: `mcp.json`, the steering
+rules, spec templates, and hook files that record Kiro's prompts and tool
+calls into the same session logs. The hook files are written from Kiro's
+documentation and are not yet verified inside Kiro; see
+`agent-mcp/kiro/README.md`.
+
+To drive the gateway with the local model over real MCP, as an external
+client would:
 
 ```bash
 python agent-mcp/mcp_agent.py --prompt "Open canards.xml, export the CAD, mesh at surface density 30, run the solver, report CL and CD."
-``` A complete, verified example that drives the geometry and CFD
-servers end to end over their endpoints alone (open the CPACS file, export
-STEP, mesh at the laptop sizing, run SU2, read lift and drag from the
-history) is [examples/mcp_endpoints_d150.py](examples/mcp_endpoints_d150.py);
-it also documents the two integration traps: the base64 content arguments
-and the fact that the named presets live in the adapter, with
-`surface_density` as their endpoint equivalent. The agent in §7 does not go through this transport: it calls the same
-adapters in-process through identical typed schemas, which is faster and
-leaves the transport out of the experiments.
+```
+
+A complete, verified example that drives the geometry and CFD servers end
+to end over their endpoints alone (open the CPACS file, export STEP, mesh at
+the laptop sizing, run SU2, read lift and drag from the history) is
+[examples/mcp_endpoints_d150.py](examples/mcp_endpoints_d150.py); it also
+documents the two integration traps: the base64 content arguments and the
+fact that the named presets live in the adapter, with `surface_density` as
+their endpoint equivalent. The agent in §7 does not go through this
+transport: it calls the same adapters in-process through identical typed
+schemas, which is faster and leaves the transport out of the experiments.
 
 ---
 
