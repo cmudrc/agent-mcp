@@ -2,19 +2,25 @@
 
 Serves one page on localhost showing the active stage, recent tool calls
 with durations, honest typical-time estimates from measured runs, and the
-newest pressure render found in the project's output folders. Standard
-library only; read-only over the progress files and the output folders.
+newest pressure render found in the project's output folders. /sessions
+serves the session index and each session's report (see aircraft_mcp.viewer),
+rendered fresh from the session logs on every request. Standard library only;
+read-only over the progress files, the output folders and the session logs.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from aircraft_mcp.local_agent import project_root
 from aircraft_mcp.progress import ProgressLog
+from aircraft_mcp.runlog import runs_dir
+
+_SESSION = re.compile(r"^/sessions/([A-Za-z0-9_.-]+)/(report\.html|events\.jsonl|meta\.json|blobs/[0-9a-f]{64}\.txt)$")
 
 _PAGE = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Aircraft analysis progress</title>
@@ -27,6 +33,7 @@ _PAGE = """<!doctype html>
  img{max-width:100%;border:1px solid #e5e1d8;border-radius:6px;margin-top:1rem}
 </style></head><body>
 <h1>Aircraft analysis — live progress</h1>
+<div class="muted"><a href="/sessions/">Session reports</a>: every model call and tool call, per session</div>
 <div class="stage" id="stage">idle</div>
 <div class="muted" id="meta"></div>
 <table id="events"><tr><th>time</th><th>stage</th><th>tool</th><th>status</th><th>duration</th></tr></table>
@@ -105,8 +112,39 @@ def serve_dashboard(log: ProgressLog, port: int) -> None:
                     self.end_headers()
                     return
                 self._send(p.read_bytes(), "image/png")
+            elif self.path in ("/sessions", "/sessions/", "/sessions/index.html"):
+                if self.path == "/sessions":
+                    self.send_response(301)
+                    self.send_header("Location", "/sessions/")
+                    self.end_headers()
+                    return
+                from aircraft_mcp.viewer import index_html
+
+                self._send(index_html(runs_dir()).encode(), "text/html; charset=utf-8")
+            elif (m := _SESSION.match(self.path)) is not None:
+                self._session_file(m.group(1), m.group(2))
             else:
                 self.send_response(404)
                 self.end_headers()
+
+        def _session_file(self, name: str, rel: str) -> None:
+            root = runs_dir().resolve()
+            folder = (root / name).resolve()
+            if folder.parent != root or not (folder / "events.jsonl").is_file():
+                self.send_response(404)
+                self.end_headers()
+                return
+            if rel == "report.html":
+                from aircraft_mcp.viewer import report_html
+
+                self._send(report_html(folder).encode(), "text/html; charset=utf-8")
+                return
+            target = (folder / rel).resolve()
+            if folder not in target.parents or not target.is_file():
+                self.send_response(404)
+                self.end_headers()
+                return
+            ctype = "application/json" if rel.endswith(".json") else "text/plain; charset=utf-8"
+            self._send(target.read_bytes(), ctype)
 
     ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()

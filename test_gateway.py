@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
 import urllib.request
 from pathlib import Path
@@ -209,3 +210,42 @@ def test_mode_b_links_the_agent_session(monkeypatch, tmp_path):
     assert out["agent_session_dir"] == str(child)
     assert out["agent_report_html"] == str(child / "report.html")
     assert out["final_report"] == "report text"
+
+
+def test_dashboard_serves_session_reports(tmp_path):
+    import socket
+    import threading
+    import time
+
+    from aircraft_mcp.dashboard import serve_dashboard
+    from aircraft_mcp.runlog import RunLog
+
+    rl = RunLog.start("test", prompt="hello", announce=False)
+    rl.user_prompt("hello dashboard")
+    rl.session_end("done", render=False)
+    log = ProgressLog(tmp_path)
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    threading.Thread(target=serve_dashboard, args=(log, port), daemon=True).start()
+    base = f"http://127.0.0.1:{port}"
+    deadline = time.time() + 5
+    while True:
+        try:
+            with urllib.request.urlopen(f"{base}/sessions/", timeout=2) as r:
+                index = r.read().decode()
+            break
+        except Exception:
+            if time.time() > deadline:
+                raise
+            time.sleep(0.2)
+    assert f"{rl.path.name}/report.html" in index
+    with urllib.request.urlopen(f"{base}/sessions/{rl.path.name}/report.html", timeout=5) as r:
+        assert "hello dashboard" in r.read().decode()
+    for bad in ("/sessions/../etc/report.html", "/sessions/nope/report.html"):
+        try:
+            urllib.request.urlopen(base + bad, timeout=2)
+            raise AssertionError(bad)
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 404
+    assert os.environ["AIRCRAFT_RUNS_DIR"] in str(rl.path)

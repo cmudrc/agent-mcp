@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agent-mcp"
 version = "0.4.0"
-description = "Local Gemma agentic orchestrator over the five CPACS aircraft-analysis MCPs and the aircraft-mcp gateway that serves them behind one endpoint."
+description = "Local Gemma agentic orchestrator over the five CPACS aircraft-analysis MCPs, the aircraft-mcp gateway that serves them behind one endpoint, and complete session logs with a readable HTML viewer."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
@@ -32,6 +32,7 @@ dependencies = [
 
 [project.scripts]
 aircraft-mcp = "aircraft_mcp.__main__:main"
+aircraft-runs = "aircraft_mcp.viewer:main"
 
 [project.optional-dependencies]
 multimodal = ["pyvista>=0.43", "pillow>=10"]
@@ -43,7 +44,8 @@ Homepage = "https://github.com/cmudrc/agent-mcp"
 Issues   = "https://github.com/cmudrc/agent-mcp/issues"
 
 # The agents stay top-level scripts (gemma_agent.py is launched directly
-# with its own venv-respawn logic); aircraft_mcp is the gateway.
+# with its own venv-respawn logic); aircraft_mcp is the gateway, the session
+# logger and the viewer.
 [tool.setuptools]
 py-modules = ["gemma_agent", "gemma_agent_v2"]
 packages = ["aircraft_mcp"]
