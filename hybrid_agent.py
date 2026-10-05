@@ -79,6 +79,10 @@ import ollama  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent / "scripts"))
 from render_aircraft_views import render_composite  # noqa: E402
 
+# Session log (aircraft_mcp ships beside this file): every model request and
+# response and every tool call and result, in full, under ~/aircraft-runs.
+from aircraft_mcp.runlog import RunLog  # noqa: E402
+
 
 DEFAULT_PLANNER = "gemma4:e4b"
 # Migration note (2026-05-28): Qwen retired (Boeing integration). Gemma 4 E4B
@@ -205,6 +209,8 @@ def run_seeker(
     seeker_model: str,
     image_path: Path,
     context: dict,
+    runlog: RunLog | None = None,
+    turn: int | None = None,
 ) -> dict:
     """Ask the multimodal Seeker to judge a rendered SU2 figure.
 
@@ -241,6 +247,20 @@ def run_seeker(
         f"which favours needs_finer_mesh.\n\n"
         f"Return the JSON verdict now."
     )
+    options = {"temperature": 0.0, "num_ctx": 8192}
+    if runlog is not None:
+        runlog.event(
+            "seeker_request",
+            turn=turn,
+            model=seeker_model,
+            system=sys_msg,
+            user_text=user_text,
+            image=runlog.add_image(image_path),
+            image_source=str(image_path),
+            context=context,
+            options=options,
+            response_schema=SEEKER_SCHEMA,
+        )
     t0 = time.time()
     resp = ollama.chat(
         model=seeker_model,
@@ -249,7 +269,7 @@ def run_seeker(
             {"role": "user", "content": user_text, "images": [str(image_path)]},
         ],
         format=SEEKER_SCHEMA,
-        options={"temperature": 0.0, "num_ctx": 8192},
+        options=options,
         keep_alive="10m",
     )
     dt = time.time() - t0
@@ -266,6 +286,8 @@ def run_seeker(
         }
     verdict["_latency_s"] = round(dt, 2)
     verdict["_model"] = seeker_model
+    if runlog is not None:
+        runlog.seeker_response(resp, verdict=verdict, turn=turn, latency_s=round(dt, 2))
     return verdict
 
 
@@ -349,6 +371,7 @@ def run_hybrid(
     seeker_enabled: bool = True,
     trace_path: Path | None = None,
     fault: FaultInjector | None = None,
+    runlog: RunLog | None = None,
 ) -> None:
     """ReAct loop with a Gemma seeker inserted after every solver tool call.
 
@@ -359,6 +382,11 @@ def run_hybrid(
     Reuses gemma_agent's tool registry and chat-history bookkeeping;
     the only addition is the seeker call between the tool observation
     and the next planner turn.
+
+    Every model request and response, tool call and result, and Seeker
+    verdict is written to a session log (aircraft_mcp.runlog) unless
+    AIRCRAFT_LOG=0; pass ``runlog`` to write into an existing one. The
+    --trace-jsonl file is written exactly as before, independently.
     """
     image_dir = image_dir or Path("hybrid_seeker_renders")
     image_dir.mkdir(exist_ok=True)
@@ -413,16 +441,99 @@ def run_hybrid(
         {"role": "user", "content": f"CPACS file: {cpacs}\n\nRequest: {prompt}"},
     ]
 
+    own_log = runlog is None
+    rl = runlog or RunLog.start(
+        "hybrid_agent",
+        model=planner_model,
+        cpacs=cpacs,
+        prompt=prompt,
+        system_prompt=system_prompt,
+        tools=tools,
+        meta={
+            "seeker_model": seeker_model if seeker_enabled else None,
+            "seeker_enabled": seeker_enabled,
+            "max_turns": max_turns,
+            "fault": None if fault is None else f"{fault.name}:{fault.nth}",
+            "trace_jsonl": str(trace_path) if trace_path else None,
+        },
+    )
+    rl.user_prompt(prompt, cpacs=cpacs)
+    planner_options = {"temperature": 0.0, "num_ctx": 16384}
+    end_reason = "max_turns reached"
+    turns_used = 0
+    try:
+        _hybrid_turns(
+            planner_model,
+            seeker_model,
+            max_turns,
+            image_dir,
+            seeker_enabled,
+            trace,
+            fault,
+            rl,
+            tools,
+            handlers,
+            messages,
+            planner_options,
+        )
+    except _LoopEnd as end:
+        end_reason, turns_used = end.reason, end.turn
+    except BaseException as exc:
+        end_reason = f"exception: {type(exc).__name__}: {exc}"
+        raise
+    else:
+        turns_used = max_turns
+        trace({"event": "end", "turn": max_turns, "reason": "max_turns reached"})
+        print("\n(agent stopped: max_turns reached)")
+    finally:
+        if own_log:
+            rl.session_end(end_reason, turns=turns_used)
+
+
+class _LoopEnd(Exception):
+    """The planner loop ended before the turn budget (report or no call)."""
+
+    def __init__(self, reason: str, turn: int) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.turn = turn
+
+
+def _hybrid_turns(
+    planner_model: str,
+    seeker_model: str,
+    max_turns: int,
+    image_dir: Path,
+    seeker_enabled: bool,
+    trace: Any,
+    fault: FaultInjector | None,
+    rl: RunLog,
+    tools: list[dict[str, Any]],
+    handlers: dict[str, Any],
+    messages: list[dict[str, Any]],
+    planner_options: dict[str, Any],
+) -> None:
+    """The planner turns of run_hybrid. Raises _LoopEnd when the planner
+    reports or stops calling tools; returns when the turn budget is spent."""
     for turn in range(1, max_turns + 1):
         print(f"\n--- Turn {turn} [planner={planner_model}] ---")
+        rl.llm_request(
+            model=planner_model,
+            messages=messages,
+            options=planner_options,
+            turn=turn,
+            n_tools=len(tools),
+            keep_alive="10m",
+        )
         t_planner = time.time()
         resp = ollama.chat(
             model=planner_model,
             messages=messages,
             tools=tools,
-            options={"temperature": 0.0, "num_ctx": 16384},
+            options=planner_options,
             keep_alive="10m",
         )
+        rl.llm_response(resp, turn=turn, wall_s=round(time.time() - t_planner, 2))
         msg = resp["message"]
         thought = msg.get("content", "") or ""
         if thought.strip():
@@ -449,7 +560,7 @@ def run_hybrid(
             print("  (no tool call -- planner ended)")
             print(f"\n(agent stopped: planner ended on turn {turn} without report_done)")
             trace({"event": "end", "turn": turn, "reason": "planner ended without report_done"})
-            return
+            raise _LoopEnd("planner ended without report_done", turn)
 
         for tc in tool_calls:
             fn = tc["function"] if isinstance(tc, dict) else tc.function
@@ -461,6 +572,7 @@ def run_hybrid(
                 except json.JSONDecodeError:
                     args = {}
             print(f"  CALL  {name}({json.dumps(args)[:160]})")
+            call_id = rl.tool_call(name, args, turn=turn)
             t_tool = time.time()
             if fault is not None:
                 fault.before(name)
@@ -472,11 +584,28 @@ def run_hybrid(
                 )
             except Exception as e:
                 result = {"error": f"{type(e).__name__}: {e}"}
+            altered = False
             if fault is not None:
                 n_before = len(fault.records)
                 result = fault.after(name, result)
                 for rec in fault.records[n_before:]:
                     trace({**rec, "turn": turn})
+                    rl.event(
+                        "fault_injected",
+                        turn=turn,
+                        call_id=call_id,
+                        tool=name,
+                        **{("fault_kind" if k == "kind" else k): v for k, v in rec.items() if k != "event"},
+                    )
+                    altered = True
+            rl.tool_result(
+                name,
+                result,
+                call_id=call_id,
+                duration_s=time.time() - t_tool,
+                turn=turn,
+                **({"altered_by_fault_injector": True} if altered else {}),
+            )
             print(f"  ←     {json.dumps(result, default=str)[:200]}")
             trace(
                 {
@@ -500,13 +629,15 @@ def run_hybrid(
                 print("\n=== FINAL (planner) ===")
                 print(result.get("final_summary", "(no summary)"))
                 trace({"event": "end", "turn": turn, "reason": "report_done"})
-                return
+                rl.final_report(str(result.get("final_summary", "")), source="report_done", turn=turn)
+                raise _LoopEnd("report_done", turn)
 
             # Hybrid hook: if this was a solver tool that produced a VTU,
             # render it and dispatch the Seeker.
             vtu = _find_latest_vtu(result)
             if vtu is not None and name == "su2_run_aero" and not seeker_enabled:
                 print("  >>>   seeker disabled (ablation): no render, no verdict")
+                rl.event("note", turn=turn, text="Seeker disabled (ablation): no render, no verdict")
             if vtu is not None and name == "su2_run_aero" and seeker_enabled:
                 print(f"  >>>   rendering 3-panel composite from {vtu} for Seeker...")
                 png_path = image_dir / f"turn{turn:02d}_{name}.png"
@@ -528,7 +659,7 @@ def run_hybrid(
                     ctx["field_range"] = list(info["field_range"])
                     ctx["surface_cells"] = info["surface_cells"]
                     print(f"  >>>   calling SEEKER ({seeker_model})...")
-                    verdict = run_seeker(seeker_model, png_path, ctx)
+                    verdict = run_seeker(seeker_model, png_path, ctx, runlog=rl, turn=turn)
                     print(
                         f"  >>>   SEEKER: verdict={verdict['verdict']} conf={verdict['confidence']:.2f} "
                         f"({verdict.get('_latency_s')}s)"
@@ -542,6 +673,7 @@ def run_hybrid(
                     )
                 except Exception as e:
                     print(f"  >>>   seeker pipeline failed: {type(e).__name__}: {e}")
+                    rl.event("seeker_error", turn=turn, error=f"{type(e).__name__}: {e}")
                     messages.append(
                         {
                             "role": "tool",
@@ -549,9 +681,6 @@ def run_hybrid(
                             "content": json.dumps({"error": str(e)}),
                         }
                     )
-
-    trace({"event": "end", "turn": max_turns, "reason": "max_turns reached"})
-    print("\n(agent stopped: max_turns reached)")
 
 
 # ---- CLI -------------------------------------------------------------------

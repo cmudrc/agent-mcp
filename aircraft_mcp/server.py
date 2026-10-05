@@ -5,12 +5,17 @@ gateway mounts a proxy per server with a namespace prefix (tigl_*, su2_*,
 pycycle_*, nseg_*, aviary_*). A missing console script surfaces as that
 mount being absent plus a warning tool listing what was skipped, never as a
 fake tool.
+
+Every tool call is written in full (arguments and result) to the gateway's
+session log under ~/aircraft-runs (see aircraft_mcp.runlog); AIRCRAFT_LOG=0
+turns that off.
 """
 
 from __future__ import annotations
 
 import shutil
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +25,7 @@ from fastmcp.client.transports import StdioTransport
 from aircraft_mcp.local_agent import run_local_agent
 from aircraft_mcp.middleware import StageMiddleware
 from aircraft_mcp.progress import TYPICAL_SECONDS, ProgressLog
+from aircraft_mcp.runlog import RunLog
 
 SERVERS: tuple[tuple[str, str], ...] = (
     ("tigl", "tigl-mcp"),
@@ -43,8 +49,13 @@ def _resolve(command: str) -> str | None:
 def build_gateway(
     state_dir: Path | None = None,
     skip: set[str] | None = None,
+    runlog_factory: Callable[[], RunLog] | None = None,
 ) -> tuple[FastMCP, ProgressLog, list[str]]:
-    """Build the gateway. Returns (server, progress log, skipped-server list)."""
+    """Build the gateway. Returns (server, progress log, skipped-server list).
+
+    The stage middleware is also reachable as ``server.stage_middleware``;
+    its ``runlog`` is the gateway's session log.
+    """
     log = ProgressLog(state_dir)
     gw: FastMCP = FastMCP(
         name="aircraft-mcp",
@@ -58,9 +69,9 @@ def build_gateway(
             "back as structured errors."
         ),
     )
-    gw.add_middleware(StageMiddleware(log))
 
     skipped: list[str] = []
+    mounted: list[str] = []
     for prefix, command in SERVERS:
         if skip and prefix in skip:
             skipped.append(f"{prefix} (skipped by flag)")
@@ -71,15 +82,27 @@ def build_gateway(
             continue
         proxy = FastMCP.as_proxy(StdioTransport(exe, []))
         gw.mount(proxy, prefix=prefix)
+        mounted.append(prefix)
+
+    if runlog_factory is None:
+
+        def runlog_factory() -> RunLog:
+            return RunLog.start("gateway", meta={"mounted": mounted, "skipped": skipped})
+
+    middleware = StageMiddleware(log, runlog_factory)
+    gw.add_middleware(middleware)
+    gw.stage_middleware = middleware  # type: ignore[attr-defined]
 
     @gw.tool
     def gateway_status() -> dict[str, Any]:
-        """Which servers are mounted, which were skipped, and where progress
-        events are written."""
+        """Which servers are mounted, which were skipped, where progress
+        events are written, and the gateway's session log folder."""
+        rl = middleware.runlog
         return {
-            "mounted": [p for p, c in SERVERS if not (skip and p in skip) and _resolve(c)],
+            "mounted": list(mounted),
             "skipped": skipped,
             "events_jsonl": str(log.events_path),
+            "session_log": str(rl.path) if rl.path else None,
             "typical_stage_seconds_estimates": TYPICAL_SECONDS,
         }
 
@@ -99,8 +122,9 @@ def build_gateway(
         """Delegate a whole analysis to the LOCAL Gemma planner (Mode B).
 
         The planner chooses and sequences the underlying tools on this
-        machine and returns its final report plus artifact paths. Requires
-        the project checkout and Ollama with gemma4:e4b. Restricted-dataset
+        machine and returns its final report plus artifact paths, and the
+        folder of its own session log (agent_session_dir). Requires the
+        project checkout and Ollama with gemma4:e4b. Restricted-dataset
         file names are refused at the gateway.
         """
         return run_local_agent(
@@ -109,6 +133,7 @@ def build_gateway(
             max_turns=max_turns,
             seeker=seeker,
             timeout_seconds=timeout_seconds,
+            parent_session=middleware.runlog.session,
         )
 
     return gw, log, skipped

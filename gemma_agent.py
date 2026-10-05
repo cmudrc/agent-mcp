@@ -1047,7 +1047,12 @@ SYSTEM_PROMPT = textwrap.dedent("""\
 def run_agent(
     model: str, cpacs_path: str, user_prompt: str, max_turns: int = 12
 ) -> None:
+    """The planner loop. Every model request and response and every tool
+    call and result is written to a session log under ~/aircraft-runs
+    (aircraft_mcp.runlog); AIRCRAFT_LOG=0 turns that off."""
     import ollama
+
+    from aircraft_mcp.runlog import RunLog
 
     client = ollama.Client()
 
@@ -1064,58 +1069,86 @@ def run_agent(
         {"role": "user", "content": user_message},
     ]
 
-    for turn in range(1, max_turns + 1):
-        print(f"\n--- Turn {turn} ---")
-        resp = client.chat(model=model, messages=messages, tools=schemas)
-        msg = resp["message"]
-        tool_calls = msg.get("tool_calls") or []
+    rl = RunLog.start(
+        "gemma_agent",
+        model=model,
+        cpacs=cpacs_path,
+        prompt=user_prompt,
+        system_prompt=SYSTEM_PROMPT,
+        tools=schemas,
+        meta={"max_turns": max_turns},
+    )
+    rl.user_prompt(user_prompt, cpacs=cpacs_path)
+    end_reason = "max_turns reached"
+    turns_used = 0
+    try:
+        for turn in range(1, max_turns + 1):
+            turns_used = turn
+            print(f"\n--- Turn {turn} ---")
+            rl.llm_request(model=model, messages=messages, turn=turn, n_tools=len(schemas))
+            t_llm = time.time()
+            resp = client.chat(model=model, messages=messages, tools=schemas)
+            rl.llm_response(resp, turn=turn, wall_s=round(time.time() - t_llm, 2))
+            msg = resp["message"]
+            tool_calls = msg.get("tool_calls") or []
 
-        if msg.get("content"):
-            preview = msg["content"][:240].replace("\n", " ")
-            print(f"  Gemma: {preview}")
+            if msg.get("content"):
+                preview = msg["content"][:240].replace("\n", " ")
+                print(f"  Gemma: {preview}")
 
-        messages.append(msg)
+            messages.append(msg)
 
-        if not tool_calls:
-            print("  (no tool call this turn -- waiting for the next plan)")
-            if turn >= 2:
-                print("  Gemma did not produce a tool call after two turns; stopping.")
-                break
-            continue
+            if not tool_calls:
+                print("  (no tool call this turn -- waiting for the next plan)")
+                if turn >= 2:
+                    print("  Gemma did not produce a tool call after two turns; stopping.")
+                    end_reason = "no tool call after two turns"
+                    break
+                continue
 
-        for tc in tool_calls:
-            name = tc["function"]["name"]
-            args_raw = tc["function"].get("arguments") or {}
-            args = args_raw if isinstance(args_raw, dict) else json.loads(args_raw)
+            for tc in tool_calls:
+                name = tc["function"]["name"]
+                args_raw = tc["function"].get("arguments") or {}
+                args = args_raw if isinstance(args_raw, dict) else json.loads(args_raw)
 
-            print(f"  CALL  {name}({json.dumps(args, default=str)[:200]})")
+                print(f"  CALL  {name}({json.dumps(args, default=str)[:200]})")
+                call_id = rl.tool_call(name, args, turn=turn)
+                t_tool = time.time()
 
-            spec = TOOLS.get(name)
-            if spec is None:
-                result: Any = {"error": f"Unknown tool: {name}"}
-            else:
-                try:
-                    result = spec["handler"](**args)
-                except Exception as exc:
-                    result = {"error": f"{type(exc).__name__}: {exc}"}
+                spec = TOOLS.get(name)
+                if spec is None:
+                    result: Any = {"error": f"Unknown tool: {name}"}
+                else:
+                    try:
+                        result = spec["handler"](**args)
+                    except Exception as exc:
+                        result = {"error": f"{type(exc).__name__}: {exc}"}
 
-            preview = json.dumps(result, default=str)[:300]
-            print(f"  ←     {preview}")
+                rl.tool_result(name, result, call_id=call_id, duration_s=time.time() - t_tool, turn=turn)
+                preview = json.dumps(result, default=str)[:300]
+                print(f"  ←     {preview}")
 
-            messages.append(
-                {
-                    "role": "tool",
-                    "name": name,
-                    "content": json.dumps(result, default=str),
-                }
-            )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "name": name,
+                        "content": json.dumps(result, default=str),
+                    }
+                )
 
-            if isinstance(result, dict) and result.get("done"):
-                print("\n=== FINAL ===")
-                print(result.get("final_summary", "(no summary)"))
-                return
+                if isinstance(result, dict) and result.get("done"):
+                    print("\n=== FINAL ===")
+                    print(result.get("final_summary", "(no summary)"))
+                    rl.final_report(str(result.get("final_summary", "")), source="report_done", turn=turn)
+                    end_reason = "report_done"
+                    return
 
-    print("\n(agent stopped: max_turns reached)")
+        print("\n(agent stopped: max_turns reached)")
+    except BaseException as exc:
+        end_reason = f"exception: {type(exc).__name__}: {exc}"
+        raise
+    finally:
+        rl.session_end(end_reason, turns=turns_used)
 
 
 DEFAULT_MODEL = "gemma4:e4b"

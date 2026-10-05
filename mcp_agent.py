@@ -8,6 +8,11 @@ and the model sees the full namespaced surface (60+ tools). That is the
 point: this measures whether a model can operate the raw endpoint surface
 that an IDE like Kiro would see.
 
+Every model request and response and every tool call and result is
+written to a session log under ~/aircraft-runs (aircraft_mcp.runlog;
+AIRCRAFT_LOG=0 turns it off). The gateway it starts writes its own session
+log, linked to this one.
+
 Usage:
     python agent-mcp/mcp_agent.py --prompt "..." [--model gemma4:e4b]
         [--max-turns 14] [--trace-jsonl out.jsonl] [--num-ctx 32768]
@@ -18,6 +23,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import shutil
 import sys
 import time
@@ -77,7 +83,7 @@ def _server_cmd() -> str:
     beside = Path(sys.executable).parent / "aircraft-mcp"
     if beside.is_file():
         return str(beside)
-    sys.exit("aircraft-mcp not found; pip install -e aircraft-mcp")
+    sys.exit("aircraft-mcp not found; pip install -e agent-mcp")
 
 
 def _mcp_tools_to_ollama(tools) -> list[dict]:
@@ -102,6 +108,31 @@ async def run(prompt: str, model: str, max_turns: int, trace_path: Path | None, 
     from fastmcp import Client
     from fastmcp.client.transports import StdioTransport
 
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from aircraft_mcp.runlog import RunLog
+
+    rl = RunLog.start(
+        "mcp_agent",
+        model=model,
+        prompt=prompt,
+        system_prompt=SYSTEM_PROMPT,
+        meta={"max_turns": max_turns, "num_ctx": num_ctx, "transport": "gateway over stdio MCP"},
+    )
+    end_reason = "max_turns"
+    try:
+        end_reason = await _run(
+            prompt, model, max_turns, trace_path, num_ctx, rl, ollama, Client, StdioTransport
+        )
+    except BaseException as exc:
+        end_reason = f"exception: {type(exc).__name__}: {exc}"
+        raise
+    finally:
+        rl.session_end(end_reason)
+
+
+async def _run(prompt, model, max_turns, trace_path, num_ctx, rl, ollama, Client, StdioTransport) -> str:
+    """The turns of one Mode A session. Returns the end reason."""
+
     def trace(rec: dict) -> None:
         if trace_path is None:
             return
@@ -109,12 +140,21 @@ async def run(prompt: str, model: str, max_turns: int, trace_path: Path | None, 
         with open(trace_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(rec, default=str) + "\n")
 
-    async with Client(StdioTransport(_server_cmd(), [])) as gw:
+    # The MCP stdio client passes the server only a minimal environment by
+    # default; pass ours so the gateway honours AIRCRAFT_RUNS_DIR,
+    # AIRCRAFT_LOG and AIRCRAFT_PARTICIPANT, and records which session
+    # started it.
+    env = dict(os.environ)
+    if rl.session:
+        env["AIRCRAFT_PARENT_SESSION"] = rl.session
+    async with Client(StdioTransport(_server_cmd(), [], env=env)) as gw:
         mcp_tools = await gw.list_tools()
         schemas = _mcp_tools_to_ollama(mcp_tools)
         known = {t.name for t in mcp_tools}
         print(f"gateway tools: {len(known)}")
         trace({"event": "start", "model": model, "prompt": prompt, "n_tools": len(known)})
+        rl.event("note", text=f"gateway tools discovered: {len(known)}", tools=schemas)
+        rl.user_prompt(prompt)
 
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -122,13 +162,17 @@ async def run(prompt: str, model: str, max_turns: int, trace_path: Path | None, 
         ]
         for turn in range(1, max_turns + 1):
             print(f"\n--- Turn {turn} ---")
+            options = {"temperature": 0.0, "num_ctx": num_ctx}
+            rl.llm_request(model=model, messages=messages, options=options, turn=turn, n_tools=len(schemas))
+            t_llm = time.time()
             resp = ollama.chat(
                 model=model,
                 messages=messages,
                 tools=schemas,
-                options={"temperature": 0.0, "num_ctx": num_ctx},
+                options=options,
                 keep_alive="10m",
             )
+            rl.llm_response(resp, turn=turn, wall_s=round(time.time() - t_llm, 2))
             msg = resp["message"]
             content = msg.get("content") or ""
             calls = msg.get("tool_calls") or []
@@ -139,12 +183,14 @@ async def run(prompt: str, model: str, max_turns: int, trace_path: Path | None, 
                 print("=== FINAL ===")
                 print(content.strip()[:2000])
                 trace({"event": "end", "turn": turn, "reason": "final"})
-                return
+                rl.final_report(content.strip(), source="FINAL text", turn=turn)
+                return "final"
             if not calls:
                 if not getattr(run, "_nudged", False):
                     run._nudged = True  # one fair client reprompt, as an IDE would
                     print("(empty response; nudging once)")
                     trace({"event": "nudge", "turn": turn})
+                    rl.event("note", turn=turn, text="empty model response; the client asked once to continue")
                     messages.append({
                         "role": "user",
                         "content": "Continue: make the next tool call, or reply with FINAL: and your summary.",
@@ -152,7 +198,7 @@ async def run(prompt: str, model: str, max_turns: int, trace_path: Path | None, 
                     continue
                 print("(no tool call and no text; stopping)")
                 trace({"event": "end", "turn": turn, "reason": "empty"})
-                return
+                return "empty"
 
             for tc in calls[:1]:  # R2: one per turn
                 fn = tc["function"] if isinstance(tc, dict) else tc.function
@@ -165,10 +211,11 @@ async def run(prompt: str, model: str, max_turns: int, trace_path: Path | None, 
                         args = {}
                 args = _substitute_stash(args)
                 print(f"  CALL {name}({json.dumps(args, default=str)[:160]})")
+                call_id = rl.tool_call(name, args, turn=turn)
+                t0 = time.time()
                 if name not in known:
                     result: object = {"error": {"type": "unknown_tool", "message": name}}
                 else:
-                    t0 = time.time()
                     try:
                         r = await gw.call_tool(name, args, timeout=1800, raise_on_error=False)
                         result = r.data if r.data is not None else (
@@ -176,6 +223,7 @@ async def run(prompt: str, model: str, max_turns: int, trace_path: Path | None, 
                         )
                     except Exception as exc:
                         result = {"error": {"type": type(exc).__name__, "message": str(exc)[:400]}}
+                rl.tool_result(name, result, call_id=call_id, duration_s=time.time() - t0, turn=turn)
                 payload = json.dumps(result, default=str)
                 print(f"  <-   {payload[:200]}")
                 trace({"event": "tool", "turn": turn, "name": name, "args": args,
@@ -198,6 +246,7 @@ async def run(prompt: str, model: str, max_turns: int, trace_path: Path | None, 
 
         print("\n(stopped: max turns)")
         trace({"event": "end", "turn": max_turns, "reason": "max_turns"})
+        return "max_turns"
 
 
 def main() -> int:

@@ -16,9 +16,11 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
-# Stage mapping from namespaced tool names.
+# Stage mapping from tool names: the gateway's namespaced tools and the
+# planner's in-process tools (su2_run_aero meshes and solves in one call).
 _STAGES: tuple[tuple[str, str], ...] = (
     ("tigl_", "Geometry"),
+    ("su2_run_aero", "Flow solve"),
     ("su2_generate_mesh", "Meshing"),
     ("su2_set_mesh", "Meshing"),
     ("su2_run_su2_solver", "Flow solve"),
@@ -27,6 +29,10 @@ _STAGES: tuple[tuple[str, str], ...] = (
     ("pycycle_", "Engine cycle"),
     ("nseg_", "Mission"),
     ("aviary_", "Mission"),
+    ("run_openaerostruct", "Wing aero (VLM)"),
+    ("export_flow_field", "Result files"),
+    ("render_flow_image", "Result files"),
+    ("report_done", "Report"),
     ("run_aircraft_analysis", "Local agent run"),
 )
 

@@ -18,6 +18,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from aircraft_mcp.runlog import find_announced_session
+
 #: Restricted-data guardrail. The gateway may be driven by cloud-connected
 #: clients, so any aircraft path matching the restricted dataset's naming
 #: (or the providing agency's acronym) is refused outright, before anything
@@ -65,6 +67,7 @@ def run_local_agent(
     max_turns: int = 12,
     seeker: bool = False,
     timeout_seconds: int = 1800,
+    parent_session: str | None = None,
 ) -> dict[str, Any]:
     root = project_root()
     if root is None:
@@ -118,6 +121,9 @@ def run_local_agent(
     if su2_bin.is_dir():
         env["PATH"] = f"{su2_bin}:{env.get('PATH', '')}"
     env.setdefault("OPENMDAO_REPORTS", "0")
+    if parent_session:
+        # The agent's own session log records which gateway session asked.
+        env["AIRCRAFT_PARENT_SESSION"] = parent_session
 
     t0 = time.time()
     try:
@@ -129,11 +135,14 @@ def run_local_agent(
             timeout=timeout_seconds,
             env=env,
         )
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
         return _error(
             f"The local agent run exceeded {timeout_seconds}s and was stopped.",
             "timeout",
-            {"trace_jsonl": str(trace)},
+            {
+                "trace_jsonl": str(trace),
+                "agent_session_dir": find_announced_session(exc.stderr),
+            },
         )
 
     out = proc.stdout or ""
@@ -150,6 +159,13 @@ def run_local_agent(
         "trace_jsonl": str(trace),
         "stdout_tail": out[-1500:],
     }
+    # The agent's own session log (every model and tool call in full) and
+    # its readable report, so the gateway session links to it.
+    session_dir = find_announced_session(proc.stderr)
+    result["agent_session_dir"] = session_dir
+    if session_dir:
+        report = Path(session_dir) / "report.html"
+        result["agent_report_html"] = str(report) if report.is_file() else None
     if final is None:
         result["error"] = {
             "type": "agent_incomplete",
