@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "aircraft": {
+      "command": "aircraft-mcp",
+      "args": ["--dashboard-port", "8765"],
+      "env": {
+        "AIRCRAFT_MCP_PROJECT_ROOT": "/absolute/path/to/the/project/checkout",
+        "SU2_MPI_RANKS": "0"
+      },
+      "disabled": false,
+      "autoApprove": ["gateway_status", "get_progress", "tigl_ping", "su2_get_su2_status"]
+    }
+  }
+}
