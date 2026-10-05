@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -131,3 +132,40 @@ def test_hook_configs_follow_the_documented_schema():
             assert "aircraft_mcp.kiro_hook" in h["action"]["command"]
             event = h["action"]["command"].split()[-1]
             assert K.normalise_event(event) is not None
+            # tool hooks record only the aircraft gateway's tools, which Kiro
+            # names @aircraft/<tool> (the server name in kiro/mcp.json)
+            if h["trigger"] in ("PreToolUse", "PostToolUse"):
+                rx = re.compile(h["matcher"])
+                assert rx.fullmatch("@aircraft/su2_run_su2_solver")
+                assert not rx.search("readFile") and not rx.search("@builtin/fs_read")
+    servers = json.loads((HERE / "kiro" / "mcp.json").read_text())["mcpServers"]
+    assert "aircraft" in servers
+
+
+def test_restricted_path_in_kiro_stops_the_record():
+    """A file path matching the restricted-dataset patterns (no such file
+    exists) writes one marker event; nothing after it is recorded, across
+    the separate hook processes."""
+    runs = Path(os.environ["AIRCRAFT_RUNS_DIR"])
+    sid = "kiro-restricted-1"
+    _run_hook("prompt_submit", json.dumps({"session_id": sid, "cwd": "/w"}), {"USER_PROMPT": "open the file"})
+    pre = {
+        "session_id": sid,
+        "cwd": "/w",
+        "tool_name": "@aircraft/tigl_open_cpacs",
+        "tool_input": {"path": "secret/f25_case/aircraft.xml"},
+    }
+    assert _run_hook("pre_tool_use", json.dumps(pre)).returncode == 0
+    assert _run_hook("post_tool_use", json.dumps({**pre, "tool_response": {"text": "<cpacs/>"}})).returncode == 0
+    assert _run_hook("prompt_submit", json.dumps({"session_id": sid}), {"USER_PROMPT": "next"}).returncode == 0
+    folder = runs / f"kiro-{sid}"
+    ev = _events(folder)
+    assert [e["kind"] for e in ev] == ["kiro_prompt_submit", "restricted_not_recorded"]
+    assert ev[1]["in_field"] == "tool_input.path"
+    assert "f25" not in (folder / "events.jsonl").read_text().lower()
+    # a restricted working folder is not written to meta.json either
+    sid2 = "kiro-restricted-2"
+    _run_hook("session_start", json.dumps({"session_id": sid2, "cwd": "/x/data/dlr_restricted"}))
+    folder2 = runs / f"kiro-{sid2}"
+    assert json.loads((folder2 / "meta.json").read_text())["cwd"] is None
+    assert [e["kind"] for e in _events(folder2)] == ["restricted_not_recorded"]

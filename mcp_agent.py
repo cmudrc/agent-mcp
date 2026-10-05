@@ -86,6 +86,17 @@ def _server_cmd() -> str:
     sys.exit("aircraft-mcp not found; pip install -e agent-mcp")
 
 
+def _gateway_transport(StdioTransport, env: dict[str, str], args: list[str] | None = None):  # noqa: N803
+    """The stdio transport that starts the gateway.
+
+    keep_alive=False stops the gateway when the client block ends (stdin
+    closed, then SIGTERM), so the gateway writes its session_end and its
+    report. fastmcp's default keeps the gateway running until this process
+    exits, and the gateway then dies without recording its end.
+    """
+    return StdioTransport(_server_cmd(), list(args or []), env=env, keep_alive=False)
+
+
 def _mcp_tools_to_ollama(tools) -> list[dict]:
     out = []
     for t in tools:
@@ -147,7 +158,7 @@ async def _run(prompt, model, max_turns, trace_path, num_ctx, rl, ollama, Client
     env = dict(os.environ)
     if rl.session:
         env["AIRCRAFT_PARENT_SESSION"] = rl.session
-    async with Client(StdioTransport(_server_cmd(), [], env=env)) as gw:
+    async with Client(_gateway_transport(StdioTransport, env)) as gw:
         mcp_tools = await gw.list_tools()
         schemas = _mcp_tools_to_ollama(mcp_tools)
         known = {t.name for t in mcp_tools}

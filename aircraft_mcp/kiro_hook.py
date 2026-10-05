@@ -119,6 +119,7 @@ def _session_dir(payload: Any) -> tuple[Path, str | None]:
 def record(event: str, payload: Any, env: dict[str, str] | None = None) -> Path | None:
     """Append one kiro_* event. Returns the session folder, or None when
     logging is off or the event name is unknown."""
+    from aircraft_mcp import restricted
     from aircraft_mcp.runlog import (
         RunLog,
         _host,
@@ -138,6 +139,7 @@ def record(event: str, payload: Any, env: dict[str, str] | None = None) -> Path 
     folder.mkdir(parents=True, exist_ok=True)
     meta_path = folder / "meta.json"
     if not meta_path.exists():
+        cwd = payload.get("cwd") if isinstance(payload, dict) else None
         meta = {
             "session": folder.name,
             "agent": "kiro",
@@ -145,7 +147,8 @@ def record(event: str, payload: Any, env: dict[str, str] | None = None) -> Path 
             "started_utc": utc_iso(),
             "model": None,
             "participant": env.get("AIRCRAFT_PARTICIPANT") or None,
-            "cwd": payload.get("cwd") if isinstance(payload, dict) else None,
+            # a restricted working folder is caught by the event check below
+            "cwd": None if restricted.find(to_jsonable(cwd)) else cwd,
             "host": _host(),
             "versions": _versions(),
             "hook_source": "written from Kiro's documentation, not yet verified inside Kiro",
@@ -172,6 +175,9 @@ def record(event: str, payload: Any, env: dict[str, str] | None = None) -> Path 
             )
     fields["payload"] = to_jsonable(payload)
     rl = RunLog(folder, folder.name, shared=True)
+    # Restricted data in any field (a file path, the working folder, the
+    # prompt) writes one restricted_not_recorded event instead, and the
+    # session records nothing after it.
     rl.event(EVENTS[name], **fields)
     return folder
 

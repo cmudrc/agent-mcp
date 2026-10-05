@@ -9,8 +9,11 @@ Each report is one self-contained file (report.html in the session folder:
 inline CSS and JavaScript, the Seeker's images embedded) that works
 offline. index.html in the runs folder lists every session. The reports are
 built only from events.jsonl and meta.json; nothing is computed except
-durations, token sums, and the check that every number in the final report
-appears in a tool result or the prompt.
+durations (with Ollama's own load_duration shown as its own stage), token
+sums, the check that every number in the final report appears in a tool
+result, tool argument, Seeker verdict or the prompt, and the list of flags
+the tools themselves returned (errors, cauchy_triggered false, defaults
+applied, the Seeker's verdict). Every value is shown exactly as logged.
 """
 
 from __future__ import annotations
@@ -126,9 +129,11 @@ def _traceable(x: float, pool: list[float]) -> bool:
 
 
 def untraced_numbers(report: str, events: list[dict[str, Any]], prompt: str) -> dict[str, Any]:
-    """Numbers in the final report that no tool result, tool argument or the
-    prompt contains (exactly, within 1 percent, or after rounding). Counts
-    0-12 are skipped, as in the RQ3 tabulation (turns, rungs)."""
+    """Numbers in the final report that no tool result, tool argument, Seeker
+    verdict or the prompt contains (exactly, within 1 percent, or after
+    rounding). Counts 0-12 are skipped, as in the RQ3 tabulation (turns,
+    rungs). The Seeker verdict counts because the planner is shown it as a
+    tool message and must report it."""
     pool: list[float] = []
     for e in events:
         kind = e.get("kind")
@@ -137,6 +142,18 @@ def untraced_numbers(report: str, events: list[dict[str, Any]], prompt: str) -> 
         elif kind in ("kiro_pre_tool_use", "kiro_post_tool_use"):
             _walk(e.get("tool_input"), pool)
             _walk(e.get("tool_response"), pool)
+        elif kind == "seeker_response":
+            _walk(e.get("verdict"), pool)
+        elif kind == "llm_request":
+            # what the planner was shown as tool output (the Seeker verdict
+            # arrives this way), never what it wrote itself
+            for m in e.get("new_messages") or []:
+                if (
+                    isinstance(m, dict)
+                    and m.get("role") == "tool"
+                    and m.get("name") != "report_done"
+                ):
+                    _walk(m.get("content"), pool)
     pool.extend(_numbers(prompt or ""))
     found = [x for x in _numbers(report) if not (x.is_integer() and 0 <= x <= 12)]
     untraced = sorted({x for x in found if not _traceable(x, pool)})
@@ -147,7 +164,36 @@ def untraced_numbers(report: str, events: list[dict[str, Any]], prompt: str) -> 
 
 
 def _fmt_num(x: float) -> str:
-    return f"{int(x)}" if float(x).is_integer() else f"{x:g}"
+    """A number at full precision: whole numbers without '.0', every other
+    value exactly as Python reads it back (never rounded for display)."""
+    x = float(x)
+    return str(int(x)) if x.is_integer() and abs(x) < 1e16 else repr(x)
+
+
+def _unwrap(result: Any) -> Any:
+    """A tool result, without the {"result": ...} wrapper some clients add."""
+    if isinstance(result, dict) and isinstance(result.get("result"), dict) and len(result) == 1:
+        return result["result"]
+    return result
+
+
+def solver_warnings(result: Any) -> list[str]:
+    """Flags in a tool result that the reader must see before using its
+    numbers. Only what the tool itself returned is restated."""
+    r = _unwrap(result)
+    if not isinstance(r, dict):
+        return []
+    out = []
+    if r.get("cauchy_triggered") is False:
+        cap = r.get("iter_cap")
+        out.append(
+            "not converged: cauchy_triggered false (the lift did not settle "
+            + (f"before the {cap}-iteration cap)" if cap is not None else "within the iteration budget)")
+        )
+    d = r.get("flight_condition_defaults_applied")
+    if isinstance(d, list) and d:
+        out.append("defaults used: " + ", ".join(map(str, d)))
+    return out
 
 
 def fmt_duration(s: float | None) -> str:
@@ -192,8 +238,22 @@ def summarize(meta: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, A
             prompt = e.get("prompt")
             break
     prompt = prompt or meta.get("prompt") or ""
+    if not prompt:  # a gateway session: the prompt is in the Mode B call
+        for e in events:
+            args = e.get("args")
+            if (
+                e.get("kind") == "tool_call"
+                and str(e.get("name") or "").endswith("run_aircraft_analysis")
+                and isinstance(args, dict)
+                and isinstance(args.get("prompt"), str)
+            ):
+                prompt = args["prompt"]
+                break
+    restricted_ev = next((e for e in events if e.get("kind") == "restricted_not_recorded"), None)
     headline = prompt
-    if not headline:
+    if not headline and restricted_ev is not None:
+        headline = "Not recorded: restricted data appeared in this session"
+    elif not headline:
         names = [str(e.get("name")) for e in events if e.get("kind") == "tool_call"]
         names = names or [str(e.get("tool_name")) for e in events if e.get("kind") == "kiro_pre_tool_use"]
         if names:
@@ -223,19 +283,59 @@ def summarize(meta: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, A
         duration = round(float(t1) - float(t0), 2)
     else:
         duration = None
-    if final is not None:
-        outcome, tone = "Final report", "ok"
+    # what the reader must check before using the numbers, each linked to
+    # the card it comes from
+    calls = {e.get("call_id"): e for e in events if e.get("kind") == "tool_call"}
+    warnings: list[dict[str, str]] = []
+    first_error = None
+    for r in results:
+        where = _where(calls.get(r.get("call_id")) or r)
+        anchor = f"c-{r.get('call_id')}"
+        if r.get("ok") is False:
+            first_error = first_error or anchor
+            warnings.append({"where": where, "text": "tool error", "anchor": anchor})
+        for w in solver_warnings(r.get("result")):
+            warnings.append({"where": where, "text": w, "anchor": anchor})
+    for e in events:
+        if e.get("kind") == "seeker_response":
+            v = (e.get("verdict") or {}).get("verdict")
+            if v and v != "acceptable":
+                warnings.append(
+                    {"where": "Seeker", "text": f"verdict {v}", "anchor": f"seek-{e.get('seq')}"}
+                )
+        elif e.get("kind") == "seeker_error":
+            warnings.append({"where": "Seeker", "text": "step failed", "anchor": ""})
+    n_warn = len(warnings)
+    warn_txt = f" · {n_warn} warning{'s' if n_warn != 1 else ''}" if n_warn else ""
+
+    # the answer: the final report, or for a gateway session the report the
+    # local agent returned through run_aircraft_analysis
+    answer, answer_source = (final.get("text"), "final report") if final else (None, None)
+    if answer is None:
+        for r in reversed(results):
+            res = _unwrap(r.get("result"))
+            if isinstance(res, dict) and isinstance(res.get("final_report"), str):
+                answer = res["final_report"]
+                answer_source = f"returned by {r.get('name')}"
+                break
+
+    if restricted_ev is not None:
+        outcome, tone = "Not recorded: restricted data", "warn"
+    elif final is not None:
+        outcome, tone = "Final report" + warn_txt, "warn" if n_warn else "ok"
     elif end is not None:
         reason = str(end.get("reason") or "ended")
-        outcome = f"Stopped: {reason}"
+        outcome = f"Stopped: {reason}{warn_txt}"
         tone = "err" if reason.startswith("exception") else "warn"
         if meta.get("agent") in ("gateway", "kiro") and not reason.startswith("exception"):
-            outcome, tone = f"Ended: {reason}", "neutral"
+            outcome, tone = f"Ended: {reason}{warn_txt}", "warn" if n_warn else "neutral"
     elif meta.get("agent") == "kiro" or any(
         str(e.get("kind", "")).startswith("kiro_") for e in events
     ):
         stops = sum(1 for e in events if e.get("kind") == "kiro_agent_stop")
         outcome, tone = f"Kiro session ({stops} agent turn{'s' if stops != 1 else ''})", "neutral"
+    elif meta.get("agent") == "gateway":
+        outcome, tone = "No end recorded (gateway still running, or its client disconnected)", "neutral"
     else:
         outcome, tone = "No end recorded (running or interrupted)", "warn"
     return {
@@ -257,12 +357,25 @@ def summarize(meta: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, A
         "outcome": outcome,
         "tone": tone,
         "final": final.get("text") if final else None,
+        "answer": answer,
+        "answer_source": answer_source,
+        "warnings": warnings,
+        "first_error": first_error,
+        "parent_session": meta.get("parent_session"),
+        "restricted": restricted_ev is not None,
         "faults": [e for e in events if e.get("kind") == "fault_injected"],
+        "altered": sum(1 for e in results if e.get("altered_by_fault_injector")),
     }
+
+
+def _where(e: dict[str, Any]) -> str:
+    turn = e.get("turn")
+    return f"{e.get('name')}" + (f", turn {turn}" if turn is not None else "")
 
 
 STAGE_COLORS = {
     "Planner (LLM)": "#7f93bd",
+    "Model loading": "#bfc5d2",
     "Seeker review": "#b394b8",
     "Geometry": "#6fa8a0",
     "Meshing": "#9fc28c",
@@ -279,6 +392,15 @@ STAGE_COLORS = {
 _FALLBACK = ("#8fa9c9", "#c9a98f", "#a9c98f", "#c98fb4", "#8fc9c3", "#b4b4b4")
 
 
+def _load_s(e: dict[str, Any], wall: Any) -> float:
+    """Seconds Ollama spent loading the model for this call (its own
+    load_duration), never more than the call's measured time."""
+    ns = (e.get("metrics") or {}).get("load_duration")
+    if not isinstance(ns, (int, float)) or not isinstance(wall, (int, float)):
+        return 0.0
+    return max(0.0, min(float(ns) / 1e9, float(wall)))
+
+
 def stage_times(events: list[dict[str, Any]], total: float | None) -> list[tuple[str, float]]:
     acc: dict[str, float] = {}
 
@@ -290,9 +412,15 @@ def stage_times(events: list[dict[str, Any]], total: float | None) -> list[tuple
     for e in events:
         k = e.get("kind")
         if k == "llm_response":
-            add("Planner (LLM)", e.get("wall_s"))
+            load = _load_s(e, e.get("wall_s"))
+            add("Model loading", load)
+            if isinstance(e.get("wall_s"), (int, float)):
+                add("Planner (LLM)", float(e["wall_s"]) - load)
         elif k == "seeker_response":
-            add("Seeker review", e.get("latency_s"))
+            load = _load_s(e, e.get("latency_s"))
+            add("Model loading", load)
+            if isinstance(e.get("latency_s"), (int, float)):
+                add("Seeker review", float(e["latency_s"]) - load)
         elif k == "tool_result":
             add(e.get("stage") or "Other", e.get("duration_s"))
         elif k == "kiro_pre_tool_use":
@@ -364,7 +492,8 @@ def render_json(obj: Any, session_dir: Path, indent: int = 0, key: str | None = 
         if not obj:
             return "[]"
         if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in obj) and len(obj) <= 12:
-            return "[" + ", ".join(f'<span class="jn">{esc(_fmt_num(v))}</span>' for v in obj) + "]"
+            # one line, each value exactly as logged
+            return "[" + ", ".join(f'<span class="jn">{esc(json.dumps(v))}</span>' for v in obj) + "]"
         parts = [f"{pad}  {render_json(v, session_dir, indent + 1, key)}" for v in obj]
         return "[\n" + ",\n".join(parts) + f"\n{pad}]"
     if isinstance(obj, bool) or obj is None:
@@ -384,17 +513,13 @@ def _json_block(obj: Any, session_dir: Path, label: str, open_: bool = False) ->
     )
 
 
-_HIGHLIGHT = (
+#: Result values shown on a tool card, first and larger.
+_RESULT_KEYS = (
     "CL",
     "CD",
     "L_over_D",
-    "mach",
-    "aoa_deg",
-    "altitude_ft",
-    "preset",
     "mesh_n_elem",
     "cauchy_triggered",
-    "runtime_seconds",
     "lift_force_N",
     "drag_force_N",
     "TSFC",
@@ -408,28 +533,50 @@ _HIGHLIGHT = (
     "wings",
     "fuselages",
     "verdict",
+    "completed",
+    "exit_code",
+    "wall_seconds",
 )
+
+#: The inputs a result was computed at, on a second line.
+_INPUT_KEYS = ("mach", "aoa_deg", "altitude_ft", "preset", "ref_area_m2")
+
+
+def _chip(k: str, v: Any, cls: str = "fact") -> str:
+    # exact values, as the tool returned them (no rounding in a summary)
+    shown = str(v) if isinstance(v, str) else json.dumps(v)
+    if len(shown) > 60:
+        shown = "…" + shown[-57:]
+    return f'<span class="{cls}">{esc(k)} <b>{esc(shown)}</b></span>'
 
 
 def _facts(result: Any) -> str:
+    result = _unwrap(result)
     if not isinstance(result, dict):
         return ""
-    if isinstance(result.get("result"), dict) and len(result) == 1:
-        result = result["result"]
-    chips = []
-    for k in _HIGHLIGHT:
-        v = result.get(k)
-        if v is None or isinstance(v, (dict, list)) or is_blob_ref(v):
-            continue
-        # exact values, as the tool returned them (no rounding in a summary)
-        shown = str(v) if isinstance(v, str) else json.dumps(v)
-        if len(shown) > 60:
-            shown = "…" + shown[-57:]
-        chips.append(f'<span class="fact">{esc(k)} <b>{esc(shown)}</b></span>')
+
+    def chips(keys: tuple[str, ...], cls: str) -> list[str]:
+        out = []
+        for k in keys:
+            v = result.get(k)
+            if v is None or isinstance(v, (dict, list)) or is_blob_ref(v):
+                continue
+            out.append(_chip(k, v, cls))
+        return out
+
+    res = chips(_RESULT_KEYS, "fact big")
     ref = result.get("refinement")
-    if isinstance(ref, dict) and "plateau_met" in ref:
-        chips.append(f'<span class="fact">plateau_met <b>{esc(json.dumps(ref["plateau_met"]))}</b></span>')
-    return f'<div class="facts">{"".join(chips)}</div>' if chips else ""
+    if isinstance(ref, dict) and ref.get("plateau_met") is not None:
+        res.append(_chip("plateau_met", ref["plateau_met"], "fact big"))
+    inp = chips(_INPUT_KEYS, "fact")
+    html_ = f'<div class="facts">{"".join(res)}</div>' if res else ""
+    if inp:
+        html_ += f'<div class="facts inputs"><span class="muted">at</span>{"".join(inp)}</div>'
+    return html_
+
+
+def _warn_badges(result: Any) -> str:
+    return "".join(f'<span class="badge warn">{esc(w)}</span>' for w in solver_warnings(result))
 
 
 def _error_line(result: Any) -> str:
@@ -505,14 +652,83 @@ def _metrics_line(m: dict[str, Any] | None) -> str:
     return " · ".join(bits)
 
 
-def _step(kind_class: str, inner: str) -> str:
-    return f'<div class="step {kind_class}"><div class="card">{inner}</div></div>'
+def _step(kind_class: str, inner: str, anchor: str | None = None) -> str:
+    ident = f' id="{esc(anchor)}"' if anchor else ""
+    return f'<div class="step {kind_class}"{ident}><div class="card">{inner}</div></div>'
+
+
+def marked(text: str, untraced: set[float] | None) -> str:
+    """The text, escaped, with each number the trace check could not find
+    wrapped in <mark>."""
+    text = text or ""
+    if not untraced:
+        return esc(text)
+    out, pos = [], 0
+    for m in NUM.finditer(text):
+        try:
+            v = float(m.group(0).replace(",", ""))
+        except ValueError:
+            continue
+        if v in untraced:
+            out.append(esc(text[pos : m.start()]))
+            out.append(
+                '<mark title="not found in any tool result, tool argument, Seeker '
+                f'verdict or the prompt">{esc(m.group(0))}</mark>'
+            )
+            pos = m.end()
+    out.append(esc(text[pos:]))
+    return "".join(out)
+
+
+def _last_sentence(text: str, limit: int = 300) -> str:
+    """The last sentence of the model's reasoning, as it wrote it."""
+    parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+|\n+", text or "") if p.strip()]
+    if not parts:
+        return ""
+    last = parts[-1]
+    return last if len(last) <= limit else "…" + last[-(limit - 1) :]
+
+
+def _unanswered(req: dict[str, Any], session_dir: Path, when: str) -> str:
+    msgs = req.get("new_messages") or []
+    label = "Planner" if str(req.get("stream") or "planner") == "planner" else str(req.get("stream"))
+    turn = f" · turn {req['turn']}" if req.get("turn") is not None else ""
+    return _step(
+        "s-llm s-err",
+        f'<div class="head"><span class="title">{esc(label)}{esc(turn)}: model call with no '
+        f'response recorded</span><span class="chip">{esc(req.get("model") or "")}</span>'
+        f'<span class="meta">sent at {esc(when)}</span></div>'
+        '<div class="muted">The request was logged but no reply was: the model call failed '
+        "or the session stopped while it ran.</div>"
+        f"<details><summary>What the model was sent ({len(msgs)} new message"
+        f"{'s' if len(msgs) != 1 else ''}, {req.get('n_messages', '?')} in the conversation)"
+        "</summary>" + "".join(_message_html(m, session_dir) for m in msgs) + "</details>",
+    )
+
+
+_FAULT_TEXT = {
+    "kill_solver": (
+        "The real solver process was killed on purpose (a documented test switch, "
+        "off by default). The result shown on the tool card is the adapter's own "
+        "output after the kill, not altered."
+    ),
+}
+_FAULT_DEFAULT = (
+    "The planner was shown an altered tool result on purpose (a documented test "
+    "switch, off by default). The solver itself ran for real; the tool card shows "
+    "what the planner saw."
+)
 
 
 # ---- timeline -------------------------------------------------------------------
 
 
-def _timeline(events: list[dict[str, Any]], session_dir: Path, t0: float | None) -> str:
+def _timeline(
+    events: list[dict[str, Any]],
+    session_dir: Path,
+    t0: float | None,
+    untraced: set[float] | None = None,
+) -> str:
     out: list[str] = []
     results = {e.get("call_id"): e for e in events if e.get("kind") == "tool_result"}
     seeker_resp = [e for e in events if e.get("kind") == "seeker_response"]
@@ -525,8 +741,15 @@ def _timeline(events: list[dict[str, Any]], session_dir: Path, t0: float | None)
             return ""
         return f"+{fmt_duration(float(e['t']) - float(t0))}"
 
+    def flush_pending() -> None:
+        for req in sorted(pending_req.values(), key=lambda r: r.get("seq", 0)):
+            out.append(_unanswered(req, session_dir, when(req)))
+        pending_req.clear()
+
     for e in events:
         k = e.get("kind")
+        if k == "session_end":
+            flush_pending()
         if k == "session_start":
             bits = []
             if e.get("system_prompt"):
@@ -575,7 +798,11 @@ def _timeline(events: list[dict[str, Any]], session_dir: Path, t0: float | None)
                 )
             )
         elif k == "llm_request":
-            pending_req[str(e.get("stream") or "planner")] = e
+            stream = str(e.get("stream") or "planner")
+            old = pending_req.pop(stream, None)
+            if old is not None:  # the previous request got no reply
+                out.append(_unanswered(old, session_dir, when(old)))
+            pending_req[stream] = e
         elif k == "llm_response":
             stream = str(e.get("stream") or "planner")
             req = pending_req.pop(stream, None)
@@ -591,6 +818,13 @@ def _timeline(events: list[dict[str, Any]], session_dir: Path, t0: float | None)
             )
             thought = (e.get("content") or "").strip()
             body = f'<div class="thought">{esc(thought)}</div>' if thought else ""
+            if not thought and e.get("thinking"):
+                last = _last_sentence(str(e["thinking"]))
+                if last:
+                    body = (
+                        '<div class="thought"><span class="muted">No visible reply. Last '
+                        f"sentence of its reasoning:</span> {esc(last)}</div>"
+                    )
             if e.get("thinking"):
                 body += (
                     "<details><summary>Model reasoning (thinking)</summary>"
@@ -618,8 +852,8 @@ def _timeline(events: list[dict[str, Any]], session_dir: Path, t0: float | None)
                     "s-llm",
                     f'<div class="head"><span class="title">{esc(label)}{esc(turn)}</span>'
                     f'<span class="chip">{esc(e.get("model") or "")}</span>'
-                    f'<span class="meta">{esc(fmt_duration(e.get("wall_s")))}'
-                    f"{' · ' + esc(metrics) if metrics else ''} · {esc(when(e))}</span></div>"
+                    f'<span class="meta">took {esc(fmt_duration(e.get("wall_s")))}'
+                    f"{' · ' + esc(metrics) if metrics else ''} · replied at {esc(when(e))}</span></div>"
                     + chose
                     + body,
                 )
@@ -649,8 +883,10 @@ def _timeline(events: list[dict[str, Any]], session_dir: Path, t0: float | None)
                     "s-tool" + (" s-err" if ok is False else ""),
                     f'<div class="head"><span class="title">{esc(e.get("name"))}</span>'
                     f'<span class="chip">{esc(e.get("stage") or "")}</span>{badge}{fault}'
-                    f'<span class="meta">{esc(fmt_duration(r.get("duration_s") if r else None))}'
-                    f" · {esc(when(e))}</span></div>" + body,
+                    f"{_warn_badges(result)}"
+                    f'<span class="meta">took {esc(fmt_duration(r.get("duration_s") if r else None))}'
+                    f" · called at {esc(when(e))}</span></div>" + body,
+                    anchor=f"c-{e.get('call_id')}",
                 )
             )
         elif k == "seeker_request":
@@ -674,7 +910,7 @@ def _timeline(events: list[dict[str, Any]], session_dir: Path, t0: float | None)
             if isinstance(conf, (int, float)):
                 pct = max(0.0, min(1.0, float(conf)))
                 conf_html = (
-                    f'<span class="confwrap">confidence {pct:.0%} '
+                    f'<span class="confwrap">confidence {esc(json.dumps(conf))} '
                     f'<span class="conf"><span style="width:{pct * 100:.0f}%"></span></span></span>'
                 )
             img = _image_data_uri(session_dir, e.get("image"))
@@ -710,9 +946,10 @@ def _timeline(events: list[dict[str, Any]], session_dir: Path, t0: float | None)
                     "s-seeker",
                     '<div class="head"><span class="title">Seeker looked at the result</span>'
                     f'<span class="chip">{esc(e.get("model") or "")}</span>'
-                    f'<span class="meta">{esc(fmt_duration((resp or {}).get("latency_s")))}'
-                    f"{' · ' + esc(metrics) if metrics else ''} · {esc(when(e))}</span></div>"
+                    f'<span class="meta">took {esc(fmt_duration((resp or {}).get("latency_s")))}'
+                    f"{' · ' + esc(metrics) if metrics else ''} · asked at {esc(when(e))}</span></div>"
                     + body,
+                    anchor=f"seek-{resp.get('seq')}" if resp is not None else None,
                 )
             )
         elif k == "seeker_error":
@@ -726,14 +963,26 @@ def _timeline(events: list[dict[str, Any]], session_dir: Path, t0: float | None)
             )
         elif k == "fault_injected":
             fields = {kk: vv for kk, vv in e.items() if kk not in ("t", "session", "seq", "kind")}
+            fk = str(e.get("fault_kind") or "")
             out.append(
                 _step(
                     "s-fault",
-                    '<div class="head"><span class="title">Test harness: fault injected</span>'
+                    '<div class="head"><span class="title">Test harness: fault injected'
+                    f'{" (" + esc(fk) + ")" if fk else ""}</span>'
                     f'<span class="meta">{esc(when(e))}</span></div>'
-                    '<div>The planner was shown an altered tool result on purpose (a '
-                    "documented test switch, off by default). The solver itself ran for "
-                    "real.</div>" + _json_block(fields, session_dir, "What was changed", True),
+                    f"<div>{esc(_FAULT_TEXT.get(fk, _FAULT_DEFAULT))}</div>"
+                    + _json_block(fields, session_dir, "What the test harness did", True),
+                )
+            )
+        elif k == "restricted_not_recorded":
+            out.append(
+                _step(
+                    "s-fault",
+                    '<div class="head"><span class="title">Recording stopped: restricted data'
+                    f'</span><span class="meta">{esc(when(e))}</span></div>'
+                    f"<div>{esc(e.get('text'))}</div>"
+                    f'<div class="muted">matched in: {esc(e.get("in_event"))}, field '
+                    f"{esc(e.get('in_field'))}</div>",
                 )
             )
         elif k == "note":
@@ -750,11 +999,11 @@ def _timeline(events: list[dict[str, Any]], session_dir: Path, t0: float | None)
             )
         elif k == "final_report":
             out.append(
-                f'<div class="step s-final"><div class="card final">'
+                f'<div class="step s-final" id="final"><div class="card final">'
                 '<div class="head"><span class="title">Final report</span>'
                 f'<span class="chip">{esc(e.get("source") or "")}</span>'
-                f'<span class="meta">{esc(when(e))}</span></div>'
-                f'<div class="finaltext">{esc(e.get("text"))}</div></div></div>'
+                f'<span class="meta">at {esc(when(e))}</span></div>'
+                f'<div class="finaltext">{marked(str(e.get("text") or ""), untraced)}</div></div></div>'
             )
         elif k == "session_end":
             out.append(
@@ -789,6 +1038,7 @@ def _timeline(events: list[dict[str, Any]], session_dir: Path, t0: float | None)
                     break
             dur = (float(post["t"]) - float(e["t"])) if post and post.get("t") and e.get("t") else None
             body = _json_block(e.get("tool_input"), session_dir, "Arguments")
+            resp = None
             if post is not None:
                 resp = post.get("tool_response")
                 body = _error_line(resp) + _facts(resp) + body
@@ -804,8 +1054,8 @@ def _timeline(events: list[dict[str, Any]], session_dir: Path, t0: float | None)
                 _step(
                     "s-tool",
                     f'<div class="head"><span class="title">{esc(e.get("tool_name"))}</span>'
-                    f'<span class="chip">Kiro tool call</span>{badge}'
-                    f'<span class="meta">{esc(fmt_duration(dur))} · {esc(when(e))}</span></div>'
+                    f'<span class="chip">Kiro tool call</span>{badge}{_warn_badges(resp)}'
+                    f'<span class="meta">took {esc(fmt_duration(dur))} · called at {esc(when(e))}</span></div>'
                     + body,
                 )
             )
@@ -825,6 +1075,7 @@ def _timeline(events: list[dict[str, Any]], session_dir: Path, t0: float | None)
         else:
             fields = {kk: vv for kk, vv in e.items() if kk not in ("t", "session", "seq")}
             out.append(_step("s-note", _json_block(fields, session_dir, f"{k} event")))
+    flush_pending()  # requests still waiting when the log ends
     return '<div class="timeline">' + "\n".join(out) + "</div>"
 
 
@@ -868,7 +1119,20 @@ background:var(--card);border:3px solid var(--dot,#a3acb7)}
 .s-user{--dot:#2f6f8f}.s-llm{--dot:#7f93bd}.s-tool{--dot:#5b8fbf}.s-seeker{--dot:#b394b8}
 .s-final{--dot:#2e7d4f}.s-err{--dot:#a8443a}.s-fault{--dot:#a8443a}.s-setup,.s-note,.s-end{--dot:#c9c3b6}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 15px}
-.s-err .card{border-color:#e6c2bc}
+.s-err .card{border-color:#e6c2bc;border-left:4px solid var(--err)}
+.answer{background:#f2f8f4;border:2px solid var(--ok);border-radius:10px;padding:12px 16px;margin:0 0 12px}
+.answer.warn{background:var(--card);border-color:#c58b00}
+.answer .k{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.answer .finaltext{margin-top:4px}
+.warnlist ul{margin:6px 0 0;padding-left:20px}
+mark{background:var(--warnbg);color:var(--warn);border-radius:3px;padding:0 2px;font-weight:600}
+.fact.big{font-size:.95rem;background:#e9eef4}
+.facts.inputs{margin-top:5px}.facts.inputs .muted{align-self:center}
+a.badge{text-decoration:none}
+table.idx tr.child td:nth-child(2){padding-left:30px}
+table.idx tr.child td:nth-child(2):before{content:"↳ ";color:var(--muted)}
+details.short{margin-top:14px}
+.tablewrap{overflow-x:auto;border-radius:10px}
 .s-fault .card{border:2px solid var(--err);background:var(--errbg)}
 .head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
 .title{font-weight:600}
@@ -915,7 +1179,8 @@ table.idx th,table.idx td{padding:9px 12px;border-bottom:1px solid var(--line);t
 table.idx th{font-size:.74rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);background:#faf9f6}
 table.idx tr:hover td{background:#fbfaf7}
 .nowrap{white-space:nowrap}
-@media (max-width:640px){.seekgrid{grid-template-columns:1fr}.meta{margin-left:0}}
+@media (max-width:640px){.seekgrid{grid-template-columns:1fr}.meta{margin-left:0}
+table.idx .nowrap{white-space:normal}table.idx th,table.idx td{padding:8px 7px}}
 @media print{details{display:block}summary{display:none}.tools{display:none}body{background:#fff}}
 """
 
@@ -955,7 +1220,12 @@ def report_html(session_dir: Path) -> str:
         (
             "Tool calls",
             esc(str(s["n_tools"]))
-            + (f' <span class="badge err">{s["n_errors"]} error{"s" if s["n_errors"] != 1 else ""}</span>' if s["n_errors"] else ""),
+            + (
+                f' <a class="badge err" href="#{esc(s["first_error"] or "")}" title="go to the first '
+                f'error">{s["n_errors"]} error{"s" if s["n_errors"] != 1 else ""}</a>'
+                if s["n_errors"]
+                else ""
+            ),
         ),
         ("Agent", esc(s["agent"])),
     ]
@@ -987,12 +1257,25 @@ def report_html(session_dir: Path) -> str:
 
     banner = ""
     if s["faults"]:
+        kinds = sorted({str(f.get("fault_kind")) for f in s["faults"]})
+        killed = "kill_solver" in kinds
+        bits = [f"{len(s['faults'])} fault{'s were' if len(s['faults']) != 1 else ' was'} injected ({', '.join(kinds)})."]
+        if s["altered"]:
+            bits.append(
+                f"{s['altered']} tool result{'s were' if s['altered'] != 1 else ' was'} altered on "
+                "purpose before the planner saw it; the cards marked “altered by fault "
+                "injector” show what the planner saw."
+            )
+        if killed:
+            bits.append(
+                "kill_solver killed the real solver process; the tool card shows the "
+                "adapter's own output after the kill, unaltered."
+            )
+        bits.append("Each “fault injected” card shows what the test harness did.")
         banner = (
             '<div class="banner"><b>Test-harness fault injection was on in this session.</b> '
-            f"{len(s['faults'])} tool result{'s were' if len(s['faults']) != 1 else ' was'} "
-            "altered on purpose before the planner saw it; the cards marked "
-            "“altered by fault injector” show what the planner saw, and each "
-            "“fault injected” card shows the change.</div>"
+            + " ".join(esc(b) for b in bits)
+            + "</div>"
         )
 
     # time per stage
@@ -1020,19 +1303,24 @@ def report_html(session_dir: Path) -> str:
 
     # every number traced
     traced = ""
+    untraced: set[float] = set()
     if s["final"]:
         tr = untraced_numbers(s["final"], events, s["prompt"])
+        untraced = set(tr["untraced"])
         rule = (
             '<div class="muted">A number counts as traced when a tool result, a tool '
-            "argument or the prompt contains it exactly, within 1 percent, or after "
-            "rounding. Counts from 0 to 12 are not checked.</div>"
+            "argument, the Seeker's verdict or the prompt contains it exactly, within 1 "
+            "percent, or after rounding. Counts from 0 to 12 are not checked.</div>"
         )
         if tr["untraced"]:
-            nums = "".join(f"<span>{esc(_fmt_num(x))}</span>" for x in tr["untraced"])
+            nums = "".join(
+                f'<a href="#final"><span>{esc(_fmt_num(x))}</span></a>' for x in tr["untraced"]
+            )
             traced = (
                 '<div class="panel traced warn"><h2>Every number traced?</h2>'
                 f"<div>{len(tr['untraced'])} of {tr['checked']} numbers in the final report "
-                "do not appear in any tool result, tool argument or the prompt:</div>"
+                "do not appear in any tool result, tool argument, Seeker verdict or the "
+                "prompt (marked in the report text):</div>"
                 f'<div class="nums">{nums}</div>'
                 "<div>They may be rounding this check does not recognise, arithmetic the "
                 "model did itself, or invented values. Compare them with the tool cards "
@@ -1042,19 +1330,44 @@ def report_html(session_dir: Path) -> str:
             traced = (
                 '<div class="panel traced ok"><h2>Every number traced</h2>'
                 f"<div>All {tr['checked']} numbers in the final report appear in a tool result, "
-                f"a tool argument or the prompt.</div>{rule}</div>"
+                f"a tool argument, the Seeker's verdict or the prompt.</div>{rule}</div>"
             )
+
+    # the answer first, then what to check before using it
+    answer = ""
+    if s["answer"]:
+        answer = (
+            f'<div class="answer{" warn" if s["warnings"] or untraced else ""}" id="answer">'
+            f'<div class="k">Answer ({esc(s["answer_source"])})</div>'
+            f'<div class="finaltext">{marked(s["answer"], untraced if s["final"] else None)}</div></div>'
+        )
+    warn_panel = ""
+    if s["warnings"]:
+        items = "".join(
+            "<li>"
+            + (
+                f'<a href="#{esc(w["anchor"])}">{esc(w["where"])}</a>'
+                if w["anchor"]
+                else esc(w["where"])
+            )
+            + f": {esc(w['text'])}</li>"
+            for w in s["warnings"]
+        )
+        warn_panel = (
+            '<div class="panel traced warn warnlist"><h2>Check before using the numbers '
+            f"({len(s['warnings'])})</h2><ul>{items}</ul></div>"
+        )
 
     t0 = events[0].get("t") if events else None
     body = (
         '<div class="top"><h1>Aircraft analysis session</h1>'
         f'<span class="id">{esc(s["session"] or session_dir.name)}</span>'
         '<span class="nav"><a href="../index.html">all sessions</a></span></div>'
-        f'<div class="prompt">{esc(s["headline"])}</div>'
-        f'<div class="grid">{grid}</div>{links_html}{banner}{stage_panel}{traced}'
+        f'<div class="prompt">{esc(s["headline"])}</div>{answer}'
+        f'<div class="grid">{grid}</div>{links_html}{banner}{warn_panel}{traced}{stage_panel}'
         '<div class="tools"><button onclick="setAll(true)">expand all</button> '
         '<button onclick="setAll(false)">collapse all</button></div>'
-        + _timeline(events, session_dir, t0)
+        + _timeline(events, session_dir, t0, untraced)
         + f"<footer>Built by aircraft-runs from <a href=\"events.jsonl\">events.jsonl</a> "
         f'({len(events)} events) and <a href="meta.json">meta.json</a>. Long values are '
         "stored unaltered in blobs/ and linked, not shown.</footer>"
@@ -1078,34 +1391,79 @@ def _index_row(d: Path) -> dict[str, Any]:
     return {"dir": d, **s}
 
 
+def _is_short_tool_only(r: dict[str, Any]) -> bool:
+    """A test or probe: tools called directly, no model, under one second."""
+    d = r.get("duration_s")
+    return (
+        not r.get("prompt")
+        and not r.get("llm_calls")
+        and not r.get("restricted")
+        and isinstance(d, (int, float))
+        and d < 1.0
+    )
+
+
+def _index_tr(r: dict[str, Any], child: bool = False) -> str:
+    prompt = (r["headline"] or "").strip()
+    if len(prompt) > 160:
+        prompt = prompt[:157] + "…"
+    name = r["dir"].name
+    tr_open = '<tr class="child">' if child else "<tr>"
+    return (
+        tr_open
+        + f'<td class="nowrap">{esc(fmt_time(r["start_t"]))}</td>'
+        f'<td><a href="{esc(name)}/report.html">{esc(prompt)}</a>'
+        f'<div class="muted">{esc(name)}'
+        f"{' · started by the gateway session above' if child else ''}"
+        f"{' · participant ' + esc(r['participant']) if r.get('participant') else ''}</div></td>"
+        f'<td>{esc(r["agent"])}<div class="muted">{esc(r["model"] or "")}</div></td>'
+        f'<td><span class="badge {r["tone"]}">{esc(r["outcome"])}</span></td>'
+        f'<td class="nowrap">{esc(fmt_duration(r["duration_s"]))}</td>'
+        f'<td>{r["n_tools"]}{" (" + str(r["n_errors"]) + " err)" if r["n_errors"] else ""}</td>'
+        "</tr>"
+    )
+
+
+_INDEX_HEAD = (
+    '<div class="tablewrap"><table class="idx"><tr><th>Started</th><th>Prompt</th><th>Agent / model</th>'
+    "<th>Outcome</th><th>Duration</th><th>Tools</th></tr>"
+)
+
+
 def index_html(root: Path) -> str:
     root = Path(root)
     rows = [_index_row(d) for d in list_sessions(root)]
     rows.sort(key=lambda r: r.get("start_t") or 0, reverse=True)
-    trs = []
+    names = {r["dir"].name for r in rows}
+    # a session started by a gateway session is listed under it
+    children: dict[str, list[dict[str, Any]]] = {}
+    top = []
     for r in rows:
-        prompt = (r["headline"] or "").strip()
-        if len(prompt) > 160:
-            prompt = prompt[:157] + "…"
-        name = r["dir"].name
-        trs.append(
-            "<tr>"
-            f'<td class="nowrap">{esc(fmt_time(r["start_t"]))}</td>'
-            f'<td><a href="{esc(name)}/report.html">{esc(prompt)}</a>'
-            f'<div class="muted">{esc(name)}'
-            f"{' · participant ' + esc(r['participant']) if r.get('participant') else ''}</div></td>"
-            f'<td>{esc(r["agent"])}<div class="muted">{esc(r["model"] or "")}</div></td>'
-            f'<td><span class="badge {r["tone"]}">{esc(r["outcome"])}</span></td>'
-            f'<td class="nowrap">{esc(fmt_duration(r["duration_s"]))}</td>'
-            f'<td>{r["n_tools"]}{" (" + str(r["n_errors"]) + " err)" if r["n_errors"] else ""}</td>'
-            "</tr>"
-        )
+        parent = r.get("parent_session")
+        if parent and parent in names and parent != r["dir"].name:
+            children.setdefault(parent, []).append(r)
+        else:
+            top.append(r)
+    short = [r for r in top if _is_short_tool_only(r) and r["dir"].name not in children]
+    main_rows = [r for r in top if r not in short]
+    trs = []
+    for r in main_rows:
+        trs.append(_index_tr(r))
+        trs.extend(_index_tr(c, child=True) for c in children.get(r["dir"].name, []))
     table = (
-        '<table class="idx"><tr><th>Started</th><th>Prompt</th><th>Agent / model</th>'
-        "<th>Outcome</th><th>Duration</th><th>Tools</th></tr>" + "".join(trs) + "</table>"
+        _INDEX_HEAD + "".join(trs) + "</table></div>"
         if trs
         else '<div class="panel">No sessions recorded yet.</div>'
     )
+    if short:
+        table += (
+            f'<details class="short"><summary>{len(short)} short tool-only session'
+            f'{"s" if len(short) != 1 else ""} (under 1 s, no model calls; usually tests '
+            "or a client checking the tools)</summary>"
+            + _INDEX_HEAD
+            + "".join(_index_tr(r) for r in short)
+            + "</table></div></details>"
+        )
     body = (
         '<div class="top"><h1>Aircraft analysis sessions</h1>'
         f'<span class="id">{esc(str(root))}</span></div>'
@@ -1116,12 +1474,30 @@ def index_html(root: Path) -> str:
     return _page("Aircraft analysis sessions", body)
 
 
+def _stale(d: Path) -> bool:
+    """True when the session has no report, or was written to after it."""
+    rep = d / "report.html"
+    if not rep.exists():
+        return True
+    try:
+        newest = max(
+            (d / f).stat().st_mtime for f in ("events.jsonl", "meta.json") if (d / f).exists()
+        )
+    except ValueError:
+        return False
+    return newest > rep.stat().st_mtime
+
+
 def render_index(root: Path, render_missing: bool = True) -> Path:
+    """Write index.html. With render_missing (the default), also (re)render
+    every session whose report is missing or older than its log, such as a
+    Kiro session that has gained events or a session another process is
+    still writing."""
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     if render_missing:
         for d in list_sessions(root):
-            if not (d / "report.html").exists():
+            if _stale(d):
                 try:
                     render_session(d)
                 except Exception as exc:  # one bad folder must not hide the rest

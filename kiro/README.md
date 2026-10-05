@@ -40,9 +40,15 @@ Before using it:
    `/path/to/project/.venv/bin/python`.
 2. Set `AIRCRAFT_PARTICIPANT` in the environment Kiro starts from to tag a
    study participant's sessions.
-3. The tool hooks have no `matcher`, so they record every tool Kiro uses,
-   including its own file tools. To record only the aircraft tools, add a
-   `"matcher"` regex that matches their names.
+3. The tool hooks record only the aircraft gateway's tools. Their
+   `"matcher"` is `@.*aircraft.*`: Kiro's documentation names MCP tools
+   `@<server>/<tool>` (the server is `aircraft` in `mcp.json`) and reads a
+   filter that starts with `@` as a regex. Kiro's own file, shell and web
+   tools are not recorded, so a file the agent opens is not copied into the
+   log. Removing the matcher records every tool. Either way, when a path or
+   name matching the restricted-dataset patterns appears in a prompt, the
+   working folder or a tool call, the session writes one
+   `restricted_not_recorded` event and records nothing after it.
 4. Check after the first session that `~/aircraft-runs/kiro-<id>/` exists
    and that `aircraft-runs` shows the prompts and tool calls. Until that
    has been done, treat these hooks as unverified.

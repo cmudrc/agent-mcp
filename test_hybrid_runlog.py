@@ -146,3 +146,61 @@ def test_fault_injection_is_disclosed_in_the_log(monkeypatch, tmp_path, capsys):
     assert result["altered_by_fault_injector"] is True and result["result"]["CL"] == 5.0
     end = ev[-1]
     assert end["kind"] == "session_end" and end["reason"].startswith("exception: StopIteration")
+
+
+def test_kill_solver_does_not_mark_the_result_altered(monkeypatch, tmp_path, capsys):
+    """kill_solver leaves the result as the adapter returned it, so the tool
+    card must not say "altered". The model, the tool and the killer thread
+    are replaced: nothing is started or killed here."""
+    from ollama import ChatResponse, Message
+
+    replies = iter(
+        [
+            ChatResponse(
+                model="scripted",
+                message=Message(
+                    role="assistant",
+                    content="",
+                    tool_calls=[
+                        Message.ToolCall(
+                            function=Message.ToolCall.Function(name="su2_run_aero", arguments={"cpacs_path": "x"})
+                        )
+                    ],
+                ),
+            ),
+        ]
+    )
+    monkeypatch.setattr(h.ollama, "chat", lambda **kw: next(replies))
+    adapter_error = {"error": {"type": "solver_failed", "message": "SU2_CFD exited with signal 9"}}
+    monkeypatch.setitem(
+        h.planner_mod.TOOLS,
+        "su2_run_aero",
+        {"schema": {"type": "function", "function": {"name": "su2_run_aero"}}, "handler": lambda **kw: dict(adapter_error)},
+    )
+
+    def fake_killer(self):
+        self._kill_record = {"killed": True, "pids": ["1"], "t": 0.0}
+
+    monkeypatch.setattr(h.FaultInjector, "_kill_su2_when_it_appears", fake_killer)
+    with pytest.raises(StopIteration):
+        h.run_hybrid(
+            "scripted",
+            "scripted",
+            "x",
+            "p",
+            max_turns=2,
+            image_dir=tmp_path / "img",
+            seeker_enabled=False,
+            fault=h.FaultInjector("kill_solver"),
+        )
+    from aircraft_mcp.runlog import find_announced_session
+    from aircraft_mcp.viewer import report_html
+
+    session = Path(find_announced_session(capsys.readouterr().err))
+    ev = [json.loads(x) for x in (session / "events.jsonl").read_text().splitlines()]
+    assert next(e for e in ev if e["kind"] == "fault_injected")["fault_kind"] == "kill_solver"
+    result = next(e for e in ev if e["kind"] == "tool_result")
+    assert "altered_by_fault_injector" not in result and result["result"] == adapter_error
+    page = report_html(session)
+    assert "altered by fault injector</span>" not in page
+    assert "The real solver process was killed on purpose" in page

@@ -108,7 +108,7 @@ def test_report_has_every_section(tmp_path):
         "Flow solve",
         "Planner (LLM)",
         "Seeker review",
-        "Every number traced",
+        'class="panel traced ok"',  # every number in the final report traced
         "Planner · turn 1",
         "Exporting geometry first.",
         "tigl_export_geometry",
@@ -190,3 +190,155 @@ def test_unfinished_and_kiro_sessions_render(tmp_path):
     assert "You asked (in Kiro)" in page and "@aircraft/su2_run_su2_solver" in page
     assert "Kiro tools" in page  # time between pre and post
     assert "Kiro session" in page
+
+
+def test_numbers_are_shown_exactly_as_logged(tmp_path):
+    rl = RunLog.start("test", announce=False)
+    cid = rl.tool_call("t", {"x": 1})
+    rl.tool_result(
+        "t",
+        {"field_range": [-1.4895237684249878, 1.1823474168777466], "pair": [0.17804558, 0.17804559], "big": [123456789.5]},
+        call_id=cid,
+        duration_s=1.0,
+    )
+    rl.session_end("done", render=False)
+    page = V.report_html(rl.path)
+    for needle in ("-1.4895237684249878", "1.1823474168777466", "0.17804558", "0.17804559", "123456789.5"):
+        assert needle in page, needle
+    assert "1.48952," not in page and "1.23457e+08" not in page
+    assert V._fmt_num(0.1780455806) == "0.1780455806" and V._fmt_num(5000.0) == "5000"
+
+
+def test_seeker_verdict_numbers_count_as_traced(tmp_path):
+    d = _synthetic_session(tmp_path, "CL = 0.178. The Seeker judged needs_finer_mesh with confidence 0.8.")
+    meta, events = V.load_session(d)
+    s = V.summarize(meta, events)
+    assert V.untraced_numbers(s["final"], events, s["prompt"])["untraced"] == []
+    # and what the planner was shown as a tool message counts too
+    events.append(
+        {
+            "kind": "llm_request",
+            "new_messages": [{"role": "tool", "name": "seeker_verdict", "content": '{"_latency_s": 95.07}'}],
+        }
+    )
+    assert V.untraced_numbers("It took 95.07 s.", events, "")["untraced"] == []
+    # but never what the model itself wrote into report_done
+    events.append({"kind": "llm_request", "new_messages": [{"role": "tool", "name": "report_done", "content": "77.5"}]})
+    assert V.untraced_numbers("77.5", events, "")["untraced"] == [77.5]
+
+
+def test_header_answer_warnings_and_marks(tmp_path):
+    d = _synthetic_session(tmp_path, "CL = 0.178 and L/D = 0.31.")
+    page = V.report_html(d)
+    s = V.summarize(*V.load_session(d))
+    # the answer sits under the prompt, before the stats
+    assert page.index('id="answer"') < page.index('class="grid"')
+    # the Seeker verdict and the tool error are warnings, so the outcome is amber
+    assert s["tone"] == "warn" and s["outcome"] == "Final report · 2 warnings"
+    assert "Check before using the numbers (2)" in page
+    # the error count links to the first error card
+    assert f'href="#{s["first_error"]}"' in page and f'id="{s["first_error"]}"' in page
+    # the untraced number is marked in the report text and linked from the panel
+    assert "<mark" in page and ">0.31</mark>" in page and '<a href="#final">' in page
+
+
+def test_solver_flags_are_badges_and_warnings():
+    res = {
+        "flight_condition_defaults_applied": ["aoa", "altitude_ft"],
+        "cauchy_triggered": False,
+        "iter_cap": 250,
+        "CL": 0.1780455806,
+        "ref_area_m2": 1.0,
+        "runtime_seconds": 21.6,
+        "refinement": {"plateau_met": None},
+    }
+    w = V.solver_warnings(res)
+    assert w == [
+        "not converged: cauchy_triggered false (the lift did not settle before the 250-iteration cap)",
+        "defaults used: aoa, altitude_ft",
+    ]
+    facts = V._facts(res)
+    assert "0.1780455806" in facts and "ref_area_m2" in facts
+    assert "runtime_seconds" not in facts and "plateau_met" not in facts
+    assert facts.index("CL") < facts.index("ref_area_m2")  # results before inputs
+
+
+def test_model_loading_is_its_own_stage():
+    events = [
+        {"kind": "llm_response", "wall_s": 80.0, "metrics": {"load_duration": 60_000_000_000}},
+        {"kind": "seeker_response", "latency_s": 30.0, "metrics": {"load_duration": 10_000_000_000}},
+    ]
+    rows = dict(V.stage_times(events, None))
+    assert rows == {"Model loading": 70.0, "Planner (LLM)": 20.0, "Seeker review": 20.0}
+
+
+def test_request_without_response_is_shown(tmp_path):
+    rl = RunLog.start("test", announce=False)
+    rl.llm_request(model="m", messages=[{"role": "user", "content": "UNIQUE-REQUEST-TEXT"}], turn=1)
+    rl.session_end("exception: ResponseError: model failed to load", render=False)
+    page = V.report_html(rl.path)
+    assert "UNIQUE-REQUEST-TEXT" in page and "model call with no response recorded" in page
+    assert page.index("no response recorded") < page.index("Session ended")
+
+
+def test_gateway_session_shows_the_prompt_and_answer(tmp_path):
+    rl = RunLog.start("gateway", announce=False)
+    cid = rl.tool_call("run_aircraft_analysis", {"prompt": "Run SU2 on canards", "cpacs_path": "canards.xml"})
+    rl.tool_result(
+        "run_aircraft_analysis",
+        {"final_report": "CL = 0.178.", "completed": True, "exit_code": 0},
+        call_id=cid,
+        duration_s=5.0,
+    )
+    s = V.summarize(*V.load_session(rl.path))
+    assert s["headline"] == "Run SU2 on canards"
+    assert s["answer"] == "CL = 0.178." and s["answer_source"] == "returned by run_aircraft_analysis"
+    assert s["outcome"].startswith("No end recorded (gateway still running")
+
+
+def test_index_nests_child_sessions_and_folds_short_ones(tmp_path, monkeypatch):
+    root = tmp_path / "runs"
+    monkeypatch.setenv("AIRCRAFT_RUNS_DIR", str(root))
+    gw = RunLog.start("gateway", announce=False)
+    cid = gw.tool_call("run_aircraft_analysis", {"prompt": "go", "cpacs_path": "canards.xml"})
+    monkeypatch.setenv("AIRCRAFT_PARENT_SESSION", gw.session)
+    child = RunLog.start("hybrid_agent", prompt="go", announce=False)
+    child.user_prompt("go")
+    child.session_end("report_done", render=False)
+    monkeypatch.delenv("AIRCRAFT_PARENT_SESSION")
+    gw.tool_result("run_aircraft_analysis", {"final_report": "x"}, call_id=cid, duration_s=2.0)
+    gw.session_end("gateway stopped", render=False)
+    probe = RunLog.start("gateway", announce=False)
+    probe.tool_call("gateway_status", {})
+    probe.session_end("gateway stopped", render=False)
+    idx = V.index_html(root)
+    assert '<tr class="child">' in idx and idx.index(gw.session) < idx.index(child.session)
+    assert "1 short tool-only session" in idx
+    assert idx.index("short tool-only") < idx.index(probe.session)
+
+
+def test_index_refreshes_reports_older_than_their_log(tmp_path, monkeypatch):
+    import os
+    import time
+
+    d = tmp_path / "kiro-s1"
+    d.mkdir()
+    ev = d / "events.jsonl"
+    ev.write_text(json.dumps({"t": 1.0, "seq": 0, "kind": "kiro_prompt_submit", "prompt": "first prompt"}) + "\n")
+    V.render_index(tmp_path)
+    assert "first prompt" in (d / "report.html").read_text()
+    with open(ev, "a") as fh:
+        fh.write(json.dumps({"t": 2.0, "seq": 1, "kind": "kiro_prompt_submit", "prompt": "SECOND prompt"}) + "\n")
+    later = time.time() + 5
+    os.utime(ev, (later, later))
+    V.render_index(tmp_path)
+    assert "SECOND prompt" in (d / "report.html").read_text()
+
+
+def test_restricted_session_renders_without_content(tmp_path):
+    rl = RunLog.start("hybrid_agent", cpacs="secret/f25_case/aircraft.xml", prompt="p", announce=False)
+    rl.session_end("report_done", render=False)
+    s = V.summarize(*V.load_session(rl.path))
+    assert s["outcome"] == "Not recorded: restricted data" and s["restricted"]
+    page = V.report_html(rl.path)
+    assert "Recording stopped: restricted data" in page

@@ -17,15 +17,17 @@
     },
     {
       "name": "aircraft-log-tool-call",
-      "description": "Record every tool call before it runs: tool name and full input.",
+      "description": "Record each aircraft-gateway tool call before it runs: tool name and full input.",
       "trigger": "PreToolUse",
+      "matcher": "@.*aircraft.*",
       "action": { "type": "command", "command": "python -m aircraft_mcp.kiro_hook pre_tool_use" },
       "timeout": 10
     },
     {
       "name": "aircraft-log-tool-result",
-      "description": "Record every tool call after it runs, with the result Kiro passes.",
+      "description": "Record each aircraft-gateway tool call after it runs, with the result Kiro passes.",
       "trigger": "PostToolUse",
+      "matcher": "@.*aircraft.*",
       "action": { "type": "command", "command": "python -m aircraft_mcp.kiro_hook post_tool_use" },
       "timeout": 10
     },

@@ -22,6 +22,14 @@ Logging is on by default, because these folders are the record of user-study
 sessions. ``AIRCRAFT_LOG=0`` turns it off. ``AIRCRAFT_PARTICIPANT``, when
 set, is written to meta.json. A logging failure (disk full, no permission)
 prints one warning and never stops the run it is recording.
+
+Restricted data is never recorded. When a path or name matching the
+restricted-dataset patterns (aircraft_mcp.restricted) appears in what a
+session would write (its aircraft file, prompt, working folder, command
+line, or any later event), the session writes one ``restricted_not_recorded``
+event saying where it matched, without the matching text, and from then on
+records nothing but a bare session_end. A ``restricted.txt`` marker in the
+folder keeps it that way for other processes appending to the same session.
 """
 
 from __future__ import annotations
@@ -44,6 +52,8 @@ from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from aircraft_mcp import restricted
 
 try:  # POSIX only; used when several processes append to one session
     import fcntl
@@ -77,6 +87,14 @@ KINDS = (
     "kiro_pre_tool_use",
     "kiro_post_tool_use",
     "kiro_agent_stop",
+    "restricted_not_recorded",
+)
+
+#: What the restricted_not_recorded event says; the matching text is never
+#: written.
+RESTRICTED_NOTE = (
+    "A path or name matching the restricted-dataset patterns appeared here. "
+    "This event and everything after it in this session were not recorded."
 )
 
 #: Ollama response fields recorded as metrics when present.
@@ -164,6 +182,15 @@ def to_jsonable(obj: Any) -> Any:
             return to_jsonable(dataclasses.asdict(obj))
         except Exception:
             pass
+    # numpy arrays and scalars (and anything else array-like): every element
+    # at full precision, never numpy's shortened repr
+    for conv in ("tolist", "item"):
+        fn = getattr(obj, conv, None)
+        if callable(fn) and not isinstance(obj, type):
+            try:
+                return to_jsonable(fn())
+            except Exception:
+                pass
     if hasattr(obj, "__dict__") and not isinstance(obj, type):
         try:
             return {"_type": type(obj).__name__, **to_jsonable(vars(obj))}
@@ -260,6 +287,8 @@ class RunLog:
             "tool_errors": 0,
         }
         self.final_text: str | None = None
+        #: True once restricted data was seen: nothing more is recorded.
+        self.restricted = self.path is not None and (self.path / restricted.MARKER).exists()
         if self.path is not None and shared:
             self._seq = self._count_lines()
 
@@ -334,6 +363,30 @@ class RunLog:
         }
         if meta:
             info.update(meta)
+        hit = restricted.find(
+            to_jsonable({**info, "system_prompt": system_prompt, "tools": tools})
+        )
+        if hit:
+            # Record only that a session ran, never what it ran on.
+            rl.write_meta(
+                {
+                    "session": sid,
+                    "agent": agent,
+                    "started_utc": info["started_utc"],
+                    "participant": info["participant"],
+                    "parent_session": info["parent_session"],
+                    "restricted": True,
+                }
+            )
+            rl._mark_restricted("session_start", hit)
+            if announce:
+                print(
+                    f"{ANNOUNCE_PREFIX}{path}\n[aircraft-runs] restricted data: "
+                    "this session is NOT recorded",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            return rl
         rl.write_meta(info)
         if system_prompt:
             rl._system_prompts.add(system_prompt)
@@ -407,12 +460,54 @@ class RunLog:
             return [self._offload(v) for v in obj]
         return obj
 
+    def _mark_restricted(self, where_kind: str, where_field: str) -> None:
+        """Write the one restricted_not_recorded event (once per session,
+        across processes) and stop recording."""
+        self.restricted = True
+        if self.path is None:
+            return
+        try:
+            with self._lock, self._file_lock():
+                marker = self.path / restricted.MARKER
+                if marker.exists():
+                    return
+                marker.write_text(
+                    "This session stopped recording because restricted data "
+                    "appeared in it. See the restricted_not_recorded event.\n",
+                    encoding="utf-8",
+                )
+            self._write("restricted_not_recorded", {
+                "in_event": where_kind,
+                "in_field": where_field,
+                "text": RESTRICTED_NOTE,
+            })
+        except Exception as exc:
+            self._fail(exc)
+
     def event(self, kind: str, **fields: Any) -> int | None:
-        """Write one event; returns its seq, or None when not written."""
+        """Write one event; returns its seq, or None when not written
+        (logging off, a write failed, or restricted data: see the module
+        docstring)."""
         if self.path is None:
             return None
+        if not self.restricted and self.shared:  # another process may have marked it
+            self.restricted = (self.path / restricted.MARKER).exists()
+        if self.restricted:
+            return None
         try:
-            body = self._offload(to_jsonable(fields))
+            plain = to_jsonable(fields)
+            hit = restricted.find(plain)
+            if hit:
+                self._mark_restricted(kind, hit)
+                return None
+            return self._write(kind, plain)
+        except Exception as exc:
+            self._fail(exc)
+            return None
+
+    def _write(self, kind: str, plain: dict[str, Any]) -> int | None:
+        try:
+            body = self._offload(plain)
             with self._lock, self._file_lock():
                 if self.shared:
                     self._seq = self._count_lines()
@@ -599,7 +694,10 @@ class RunLog:
     def add_image(self, src: str | Path) -> str | None:
         """Copy an image into images/ and return its path relative to the
         session folder (None when it could not be copied)."""
-        if self.path is None:
+        if self.path is None or self.restricted:
+            return None
+        if restricted.text_matches(str(src)):
+            self._mark_restricted("image", "source path")
             return None
         try:
             src = Path(src)
@@ -641,8 +739,10 @@ class RunLog:
         )
 
     def final_report(self, text: str, *, source: str, **fields: Any) -> int | None:
-        self.final_text = text
-        return self.event("final_report", text=text, source=source, **fields)
+        seq = self.event("final_report", text=text, source=source, **fields)
+        if seq is not None:
+            self.final_text = text
+        return seq
 
     def session_end(self, reason: str, *, render: bool | None = None, **fields: Any) -> None:
         """Write session_end, complete meta.json and (by default) render
@@ -653,7 +753,15 @@ class RunLog:
         self._closed = True
         t1 = time.time()
         wall = round(t1 - self._t0, 2)
-        self.event("session_end", reason=reason, wall_s=wall, totals=dict(self.totals), **fields)
+        if not self.restricted:
+            self.event(
+                "session_end", reason=reason, wall_s=wall, totals=dict(self.totals), **fields
+            )
+        if self.restricted:  # was already, or became so on the line above
+            # A bare end: when it ended, and why only when that is harmless.
+            if restricted.find(reason):
+                reason = "ended (reason not recorded: restricted data)"
+            self._write("session_end", {"reason": reason, "wall_s": wall, "restricted": True})
         meta = self.read_meta()
         meta.update(
             {
@@ -677,7 +785,12 @@ class RunLog:
                     render_index(self.path.parent)
                 except Exception:
                     pass
-                print(f"[aircraft-runs] report: {report}", file=sys.stderr, flush=True)
+                # a file:// link, so a terminal can open it with one click
+                print(
+                    f"[aircraft-runs] report: {Path(report).resolve().as_uri()}",
+                    file=sys.stderr,
+                    flush=True,
+                )
             except Exception as exc:
                 print(
                     f"[aircraft-runs] report not rendered ({type(exc).__name__}: {exc}); "

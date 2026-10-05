@@ -18,13 +18,15 @@ import time
 from pathlib import Path
 from typing import Any
 
+from aircraft_mcp.restricted import PATTERNS
 from aircraft_mcp.runlog import find_announced_session
 
 #: Restricted-data guardrail. The gateway may be driven by cloud-connected
 #: clients, so any aircraft path matching the restricted dataset's naming
 #: (or the providing agency's acronym) is refused outright, before anything
 #: runs. Deliberately conservative: the public study aircraft match neither.
-_RESTRICTED_PATTERNS = ("f25", "dlr")
+#: The same patterns keep restricted data out of the session logs.
+_RESTRICTED_PATTERNS = PATTERNS
 
 
 def _error(message: str, error_type: str, details: Any = None) -> dict[str, Any]:
@@ -175,9 +177,15 @@ def run_local_agent(
                 "stdout_tail and the trace)."
             ),
         }
+    # Only files this run wrote: older runs' files share these names.
     arts = []
     for pat in ("pipeline_output/*.step", "pipeline_output/su2_run*/*.vtu",
                 "pipeline_output/su2_run*/history.csv"):
-        arts.extend(str(p) for p in sorted(root.glob(pat)))
+        for p in sorted(root.glob(pat)):
+            try:
+                if p.stat().st_mtime >= t0 - 1:
+                    arts.append(str(p))
+            except OSError:
+                continue
     result["artifacts"] = arts[-12:]
     return result

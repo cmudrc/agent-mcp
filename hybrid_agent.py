@@ -597,7 +597,9 @@ def _hybrid_turns(
                         tool=name,
                         **{("fault_kind" if k == "kind" else k): v for k, v in rec.items() if k != "event"},
                     )
-                    altered = True
+                    # kill_solver changes nothing in the result: the planner
+                    # sees the adapter's own output after the kill.
+                    altered = altered or rec.get("kind") in ("impossible_cl", "inject_instruction")
             rl.tool_result(
                 name,
                 result,

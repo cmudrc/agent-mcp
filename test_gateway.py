@@ -242,10 +242,130 @@ def test_dashboard_serves_session_reports(tmp_path):
     assert f"{rl.path.name}/report.html" in index
     with urllib.request.urlopen(f"{base}/sessions/{rl.path.name}/report.html", timeout=5) as r:
         assert "hello dashboard" in r.read().decode()
-    for bad in ("/sessions/../etc/report.html", "/sessions/nope/report.html"):
+    # ".." and "." pass the name pattern, so these reach the folder check
+    for bad in (
+        "/sessions/../report.html",
+        "/sessions/./events.jsonl",
+        "/sessions/../meta.json",
+        "/sessions/nope/report.html",
+    ):
         try:
             urllib.request.urlopen(base + bad, timeout=2)
             raise AssertionError(bad)
         except urllib.error.HTTPError as exc:
-            assert exc.code == 404
+            assert exc.code == 404, bad
     assert os.environ["AIRCRAFT_RUNS_DIR"] in str(rl.path)
+    # a page on another site, rebound to 127.0.0.1, sends its own Host name
+    req = urllib.request.Request(
+        f"{base}/sessions/{rl.path.name}/events.jsonl",
+        headers={"Host": f"attacker.example:{port}"},
+    )
+    try:
+        urllib.request.urlopen(req, timeout=2)
+        raise AssertionError("foreign Host header was served")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 403
+    with urllib.request.urlopen(
+        urllib.request.Request(f"{base}/sessions/", headers={"Host": f"localhost:{port}"}), timeout=2
+    ) as r:
+        assert r.status == 200
+
+
+def test_mode_b_restricted_call_leaves_no_trace_in_the_log(tmp_path):
+    """The refused path is not written to the gateway's session log (the
+    path only matches the patterns; no such file exists)."""
+    skip = {p for p, _ in SERVERS}
+    gw, _, _ = build_gateway(state_dir=tmp_path, skip=skip)
+
+    async def go():
+        async with Client(gw) as c:
+            await c.call_tool("gateway_status", {})
+            r = await c.call_tool(
+                "run_aircraft_analysis",
+                {"prompt": "x", "cpacs_path": "data/dlr_restricted/aircraft.xml"},
+                raise_on_error=False,
+            )
+            assert r.data["error"]["type"] == "restricted_data_refused"
+
+    asyncio.run(go())
+    rl = gw.stage_middleware.runlog
+    text = (rl.path / "events.jsonl").read_text()
+    kinds = [json.loads(x)["kind"] for x in text.splitlines()]
+    assert kinds == ["session_start", "tool_call", "tool_result", "restricted_not_recorded"]
+    assert "dlr" not in text.replace(rl.session, "").lower()
+
+
+def test_mode_b_lists_only_files_this_run_wrote(monkeypatch, tmp_path):
+    """Older runs' files share the artifact names; only newer ones are
+    returned. The subprocess is replaced here: this exercises the listing."""
+    from aircraft_mcp import local_agent
+
+    (tmp_path / "agent-mcp").mkdir()
+    (tmp_path / "agent-mcp" / "hybrid_agent.py").write_text("# placeholder for the test")
+    (tmp_path / "canards.xml").write_text("<cpacs/>")
+    old = tmp_path / "pipeline_output" / "su2_run_60" / "history.csv"
+    old.parent.mkdir(parents=True)
+    old.write_text("old")
+    os.utime(old, (1_000_000_000, 1_000_000_000))
+    new = tmp_path / "pipeline_output" / "su2_run" / "history.csv"
+
+    def fake_run(cmd, **kw):
+        new.parent.mkdir(parents=True, exist_ok=True)
+        new.write_text("new")
+        return subprocess.CompletedProcess(cmd, 0, stdout="=== FINAL (planner) ===\nok", stderr="")
+
+    monkeypatch.setattr(local_agent, "project_root", lambda: tmp_path)
+    monkeypatch.setattr(local_agent.subprocess, "run", fake_run)
+    out = local_agent.run_local_agent("x", "canards.xml")
+    assert out["artifacts"] == [str(new)]
+
+
+def test_dashboard_never_offers_a_restricted_render(monkeypatch, tmp_path):
+    from aircraft_mcp import dashboard
+
+    pub = tmp_path / "pipeline_output" / "su2_run" / "cp.png"
+    hidden = tmp_path / "pipeline_output" / "f25_case" / "cp.png"
+    for p, t in ((pub, 1_000_000_000), (hidden, 2_000_000_000)):
+        p.parent.mkdir(parents=True)
+        p.write_bytes(b"png")
+        os.utime(p, (t, t))
+    monkeypatch.setattr(dashboard, "project_root", lambda: tmp_path)
+    assert dashboard._latest_render() == pub
+
+
+def test_mode_a_client_lets_the_gateway_record_its_end(monkeypatch):
+    """mcp_agent's transport stops the real gateway process when the client
+    is done, so the gateway writes session_end (fastmcp's default left it
+    running until the client process died). The five servers are skipped."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import mcp_agent
+    from fastmcp.client.transports import StdioTransport
+
+    monkeypatch.setattr(mcp_agent, "_server_cmd", lambda: sys.executable)
+    transport = mcp_agent._gateway_transport(
+        StdioTransport,
+        dict(os.environ),
+        ["-m", "aircraft_mcp", "--skip", ",".join(p for p, _ in SERVERS)],
+    )
+    assert transport.keep_alive is False
+    runs = Path(os.environ["AIRCRAFT_RUNS_DIR"])
+
+    async def go():
+        async with Client(transport) as c:
+            await c.call_tool("gateway_status", {})
+
+    asyncio.run(go())
+    import time
+
+    deadline = time.time() + 15
+    kinds: list[str] = []
+    while time.time() < deadline:
+        logs = list(runs.glob("*/events.jsonl"))
+        if logs:
+            kinds = [json.loads(x)["kind"] for x in logs[0].read_text().splitlines()]
+            if kinds and kinds[-1] == "session_end":
+                break
+        time.sleep(0.2)
+    assert kinds == ["session_start", "tool_call", "tool_result", "session_end"]

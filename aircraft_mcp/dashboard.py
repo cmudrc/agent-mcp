@@ -18,6 +18,7 @@ from pathlib import Path
 
 from aircraft_mcp.local_agent import project_root
 from aircraft_mcp.progress import ProgressLog
+from aircraft_mcp.restricted import path_matches
 from aircraft_mcp.runlog import runs_dir
 
 _SESSION = re.compile(r"^/sessions/([A-Za-z0-9_.-]+)/(report\.html|events\.jsonl|meta\.json|blobs/[0-9a-f]{64}\.txt)$")
@@ -68,16 +69,31 @@ def _latest_render() -> Path | None:
         return None
     candidates: list[Path] = []
     for pat in ("pipeline_output/**/*.png", "hybrid_seeker_renders/*.png"):
-        candidates.extend(root.glob(pat))
+        # never serve a render of the restricted dataset
+        candidates.extend(p for p in root.glob(pat) if not path_matches(p.relative_to(root)))
     if not candidates:
         return None
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
 def serve_dashboard(log: ProgressLog, port: int) -> None:
+    # Only this machine's own names for the server. A web page on another
+    # site that rebinds its DNS name to 127.0.0.1 sends its own name as Host
+    # and is refused, so it cannot read the session logs.
+    allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a) -> None:  # quiet
             return
+
+        def _host_ok(self) -> bool:
+            host = (self.headers.get("Host") or "").strip().lower()
+            if host in allowed_hosts:
+                return True
+            self.send_response(403)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return False
 
         def _send(self, body: bytes, ctype: str) -> None:
             self.send_response(200)
@@ -87,6 +103,8 @@ def serve_dashboard(log: ProgressLog, port: int) -> None:
             self.wfile.write(body)
 
         def do_GET(self) -> None:  # noqa: N802
+            if not self._host_ok():
+                return
             if self.path == "/":
                 self._send(_PAGE.encode(), "text/html; charset=utf-8")
             elif self.path == "/status.json":

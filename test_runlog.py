@@ -159,3 +159,82 @@ def test_unwritable_runs_dir_does_not_raise(monkeypatch, tmp_path, capsys):
     rl = RunLog.start("test")
     assert not rl.enabled
     assert "NOT logged" in capsys.readouterr().err
+
+
+# ---- restricted data is never recorded ------------------------------------
+# The paths below only match the restricted-dataset patterns; no restricted
+# file exists or is read.
+
+F25_PATH = "secret/f25_case/aircraft.xml"
+AGENCY_PATH = "data/dlr_restricted/aircraft.xml"
+
+
+def _text_without_ids(rl: RunLog) -> str:
+    # the folder name holds 6 random hex digits, which may contain "f25"
+    text = (rl.path / "events.jsonl").read_text() + (rl.path / "meta.json").read_text()
+    return text.replace(rl.session, "<session>").lower()
+
+
+def test_restricted_aircraft_at_start_records_nothing(capsys, tmp_path):
+    img = tmp_path / "turn02.png"
+    img.write_bytes(b"png")
+    rl = RunLog.start("hybrid_agent", model="m", cpacs=F25_PATH, prompt="run it", system_prompt="sys")
+    assert rl.restricted
+    rl.user_prompt("run it", cpacs=F25_PATH)
+    rl.llm_request(model="m", messages=[{"role": "user", "content": f"CPACS file: {F25_PATH}"}])
+    rl.tool_call("su2_run_aero", {"cpacs_path": F25_PATH})
+    assert rl.add_image(img) is None
+    assert rl.final_report("CL = 0.2", source="report_done") is None
+    rl.session_end("report_done", render=False)
+    ev = _events(rl.path)
+    assert [e["kind"] for e in ev] == ["restricted_not_recorded", "session_end"]
+    assert ev[0]["in_event"] == "session_start" and ev[0]["in_field"] == "cpacs"
+    assert ev[1]["reason"] == "report_done" and ev[1]["restricted"] is True
+    assert "f25" not in _text_without_ids(rl)
+    meta = json.loads((rl.path / "meta.json").read_text())
+    assert meta["restricted"] is True and meta["final_report"] is None
+    assert "prompt" not in meta and "command" not in meta and "cwd" not in meta
+    assert not (rl.path / "images").exists() and not (rl.path / "blobs").exists()
+    assert (rl.path / "restricted.txt").exists()
+    assert "NOT recorded" in capsys.readouterr().err
+
+
+def test_restricted_path_later_stops_the_record():
+    rl = RunLog.start("gateway", announce=False)
+    rl.tool_call("gateway_status", {})
+    cid = rl.tool_call("run_aircraft_analysis", {"prompt": "x", "cpacs_path": AGENCY_PATH})
+    rl.tool_result("run_aircraft_analysis", {"error": {"type": "restricted_data_refused"}}, call_id=cid, duration_s=0.1)
+    rl.tool_call("gateway_status", {})
+    rl.session_end(f"exception: FileNotFoundError: {AGENCY_PATH}", render=False)
+    ev = _events(rl.path)
+    assert [e["kind"] for e in ev] == ["session_start", "tool_call", "restricted_not_recorded", "session_end"]
+    assert ev[2]["in_event"] == "tool_call" and ev[2]["in_field"] == "args.cpacs_path"
+    assert ev[3]["reason"] == "ended (reason not recorded: restricted data)"
+    assert "dlr" not in _text_without_ids(rl)
+    # a second writer on the same folder (as the Kiro hook is) stays quiet
+    other = RunLog(rl.path, shared=True)
+    assert other.restricted and other.event("note", text="later") is None
+    assert len(_events(rl.path)) == 4
+
+
+def test_public_aircraft_and_ids_are_not_mistaken_for_restricted():
+    from aircraft_mcp import restricted as X
+
+    # the public D150 file names the agency in its header and model name
+    assert X.find({"creator": "Daniel Boehnke, DLR-LY", "name": "DLR's D150 Release Bird"}) is None
+    assert X.find({"cpacs_path": "aircraft-analysis/examples/D150_v30.xml"}) is None
+    # session ids, call ids and hashes are hex and may hold the digits
+    assert X.find({"dir": "/u/aircraft-runs/20261005-213448-af25b3", "sha": "ab" * 10 + "f25" + "cd" * 20}) is None
+    # an encoded payload is not read as a name
+    assert X.find({"cad_base64": "QUJD" * 40 + "xdlrxF25x" + "QUJD" * 40}) is None
+    assert X.find({"a": ["ok", {"b": F25_PATH}]}) == "a[1].b"
+    assert X.find({"p": "Analyse the F25 please"}) == "p"
+    assert X.find({"p": f"open {AGENCY_PATH} now"}) == "p"
+
+
+def test_numpy_values_are_logged_in_full():
+    np = __import__("pytest").importorskip("numpy")
+    assert R.to_jsonable(np.array([0.1780455806, 0.7398386842])) == [0.1780455806, 0.7398386842]
+    big = R.to_jsonable(np.arange(2000.0))
+    assert isinstance(big, list) and len(big) == 2000 and big[-1] == 1999.0
+    assert R.to_jsonable({"n": np.int64(41985), "ok": np.bool_(False)}) == {"n": 41985, "ok": False}
