@@ -12,6 +12,19 @@ where a step differs on Linux or Windows it says so. The session-log and
 Read the short "What you are installing" first. It explains what each piece
 is, so the error messages later make sense.
 
+> **If you have one hour**, do only these five steps:
+>
+> 1. §2: check the prerequisites.
+> 2. §3: clone the repositories and build the `.venv`.
+> 3. §4: install SU2 and build the TiGL Docker image (the build is the long
+>    part).
+> 4. §7: pull the model and run the one `hybrid_agent.py` command shown there.
+> 5. `aircraft-runs --open` to read the session report in your browser.
+>
+> Run every command with the `.venv` active (`source .venv/bin/activate`
+> from the parent directory). `aircraft-runs` and `aircraft-mcp` are on
+> your PATH only then.
+
 ---
 
 ## 1. What you are installing
@@ -142,7 +155,10 @@ export PATH="$HOME/.local/su2/bin:$PATH"
 SU2_CFD --help | head -3
 ```
 
-Put the `export PATH=...` line in your shell profile.
+Put the `export PATH=...` line in your shell profile. **Forgetting it is the
+most common cause of an apparently broken run**: the SU2 tool then returns a
+`missing_binary` error naming the install page, and nothing downstream can
+run. On Windows, SU2 runs inside WSL2 only.
 
 **Parallel SU2.** The downloaded binary is serial, which is why fine meshes
 take hours. The runner launches SU2 in parallel automatically when it can
@@ -152,10 +168,7 @@ prove it is safe: `mpirun` on PATH and an MPI-capable binary (a
 cores). To get an MPI binary, build SU2 from source with
 `-Dwith-mpi=enabled` (meson) against OpenMPI, or install a cluster module;
 running N copies of a *serial* binary would silently repeat the same case N
-times, so the runner refuses to do that and says why in `launch_reason`. **Forgetting it is the
-most common cause of an apparently broken run**: the SU2 tool then returns a
-`missing_binary` error naming the install page, and nothing downstream can
-run. On Windows, SU2 runs inside WSL2 only.
+times, so the runner refuses to do that and says why in `launch_reason`.
 
 **TiGL** (the geometry library) has no reliable native install on macOS
 Apple silicon, so the geometry server uses a Docker image when native
@@ -203,10 +216,13 @@ python -m pip install pytest pytest-cov
 (cd agent-mcp   && python -m pytest -q test_*.py)
 ```
 
-On the verification install these reported 61, 102, 67 and 40 passed, and
-agent-mcp 11 passed with 1 skipped (the skipped module covers a sixth,
-OpenAeroStruct-based server that is not published yet). Numbers grow as
-tests are added; a failure, not a different count, is what to look at.
+On the verification install (2026-09-24) these reported 61, 102, 67 and 40
+passed, and agent-mcp 11 passed with 1 skipped (the skipped module covers a
+sixth, OpenAeroStruct-based server that is not published yet). On
+2026-10-05, after the gateway, the session logs and the viewer moved into
+agent-mcp, its suite had 75 tests, all passing on the development machine.
+Numbers grow as tests are added; a failure, not a different count, is what
+to look at.
 
 ---
 
@@ -382,13 +398,25 @@ aircraft-runs ~/aircraft-runs/20261005-212343-5a2e47 --open
 aircraft-runs --all
 ```
 
-The page shows the prompt, model, duration, token totals and outcome, a bar
-of where the time went, each step in order (planner turns, tool calls with
-arguments and results, observer verdicts with the image), the final report,
-and a check that lists any number in the final report that no tool result
-or the prompt contains. `AIRCRAFT_LOG=0` turns logging off,
+The page shows the prompt and, right under it, the final report. Then the
+model, duration, token totals and outcome; a list of what to check before
+using the numbers (tool errors, a solver run that did not converge within
+its iteration cap, inputs the tool filled with defaults, an observer verdict
+other than acceptable), each linked to its step; a check that lists, and
+marks in the report text, any number in the final report that no tool
+result, tool argument, observer verdict or the prompt contains; and a bar of
+where the time went, with the time Ollama spent loading the model shown
+apart from the time the model spent answering. Below that is each step in
+order (planner turns, tool calls with arguments and results, observer
+verdicts with the image). `AIRCRAFT_LOG=0` turns logging off,
 `AIRCRAFT_RUNS_DIR` moves the folder, and `AIRCRAFT_PARTICIPANT=P01` tags a
 user-study session. `--trace-jsonl` still works as before.
+
+The logs never record the restricted dataset of §11. If a path or name
+matching its patterns appears in a session (the aircraft file, the prompt,
+the working folder, a tool argument), the session writes one
+`restricted_not_recorded` event, without the matching text, and records
+nothing after it.
 
 Things to know about the agent, all measured in the paper:
 
@@ -433,7 +461,10 @@ aircraft-mcp --transport streamable-http --port 8800
 ```
 
 The dashboard shows the active stage, call durations, the latest pressure
-render, and the session reports at `/sessions/`. The gateway writes every
+render, and the session reports at `/sessions/`. It listens on 127.0.0.1
+only and answers only requests addressed to `127.0.0.1:<port>` or
+`localhost:<port>`, so a web page from another site cannot read the
+session logs through it. The gateway writes every
 call it serves, with full arguments and results, to its own session folder
 under `~/aircraft-runs`; `run_aircraft_analysis` returns the folder of the
 planner's session as `agent_session_dir`, so the two are linked.
@@ -504,5 +535,8 @@ academic use only and is not in any repository. If you are given it, keep
 it outside every repository and never copy it into a repository, an upload,
 or a shared folder. Every repository carries an ignore rule and a
 content-checking pre-commit hook that blocks a commit containing it
-(`scripts/install_hooks.sh` in the project root installs the hooks). The two
-example aircraft in `aircraft-analysis/examples/` are free to use.
+(`scripts/install_hooks.sh` in the project root installs the hooks). The
+session logs in `~/aircraft-runs` stop recording a session as soon as a path
+or name matching the dataset appears in it (§7), and the dashboard never
+serves a render from a folder with such a name. The two example aircraft in
+`aircraft-analysis/examples/` are free to use.

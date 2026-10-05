@@ -11,9 +11,11 @@ The **agent layer** that drives our five aircraft-analysis MCPs
 
 This repo ships **three** interchangeable orchestrators, a multimodal
 aircraft-render helper, the iterative skills the agents follow, and a
-one-command [`bootstrap.sh`](bootstrap.sh) / [`bootstrap.ps1`](bootstrap.ps1)
-installer that takes a fresh machine from zero to a running Gemma agent
-in a single command. It also ships the `aircraft-mcp` gateway (all five
+[`bootstrap.sh`](bootstrap.sh) / [`bootstrap.ps1`](bootstrap.ps1)
+installer that sets up the repositories, the Python environment, SU2,
+Ollama and the Gemma model in one command (it does not build the TiGL
+Docker image the geometry step needs; see
+[RUN_THE_PIPELINE.md §4](RUN_THE_PIPELINE.md#4-su2-and-the-tigl-docker-image)). It also ships the `aircraft-mcp` gateway (all five
 servers behind one MCP endpoint, for clients such as Kiro), a session log
 of every run, and `aircraft-runs`, which turns a session log into a page
 you can read. See [Session logs](#session-logs-every-run-recorded-and-readable)
@@ -87,6 +89,10 @@ curl -fsSL https://raw.githubusercontent.com/cmudrc/agent-mcp/main/bootstrap.sh 
 bash bootstrap.sh
 ```
 
+The script does not build the TiGL Docker image. Build it yourself as in
+[RUN_THE_PIPELINE.md §4](RUN_THE_PIPELINE.md#4-su2-and-the-tigl-docker-image),
+or the geometry step returns an error.
+
 Flags you can pass to `bootstrap.sh`:
 
 | Flag                   | Effect                                                       |
@@ -106,21 +112,10 @@ WSL2 for the SU2 install step and runs the rest natively.
 
 ## Manual install (if the bootstrap script isn't an option)
 
-```bash
-# from the project root (where you'll keep all the cmudrc repos)
-python -m venv .venv && source .venv/bin/activate
-pip install -e ./tigl-mcp ./su2-mcp ./pycycle-mcp \
-            ./aviary-cpacs-mcp ./nseg-mcp \
-            ./shared_cpacs
-pip install -e ./agent-mcp
-pip install pyvista pillow ollama
-bash su2-mcp/scripts/install_su2.sh
-ollama pull gemma4:e4b
-python agent-mcp/hybrid_agent.py --cpacs D150_v30.xml
-```
-
-`agent-mcp` auto-relaunches under that `.venv` if you accidentally run
-it under your system Python.
+Follow [RUN_THE_PIPELINE.md](RUN_THE_PIPELINE.md) §3 (clone, `.venv`,
+editable installs and the pinned solver libraries) and §4 (SU2 and the TiGL
+Docker image), then the agent command in §7. Those are the commands that
+were checked on a fresh clone.
 
 ## Session logs: every run, recorded and readable
 
@@ -149,14 +144,24 @@ aircraft-runs <session_dir>   # render one session
 aircraft-runs --all --open    # render everything and open the index
 ```
 
-`report.html` is one self-contained page that works offline: the prompt,
-model, duration, token totals and outcome at the top; a bar showing where
-the time went (planner, geometry, flow solve, Seeker); then each step in
-order, with each tool call's arguments and result folded open on request.
-An "every number traced" panel lists any number in the final report that
-does not appear in a tool result or the prompt. `index.html` in the runs
-folder lists all sessions. With the gateway's dashboard running, the same
-pages are at `http://127.0.0.1:8765/sessions/`.
+`report.html` is one self-contained page that works offline: the prompt
+and the final report at the top; then model, duration, token totals and
+outcome; a list of what to check before using the numbers (tool errors,
+`cauchy_triggered` false, inputs filled with defaults, a Seeker verdict
+other than acceptable); an "every number traced" panel that lists, and
+marks in the report text, any number in the final report that does not
+appear in a tool result, tool argument, Seeker verdict or the prompt; a bar
+showing where the time went (model loading, planner, geometry, flow solve,
+Seeker); then each step in order, with each tool call's arguments and result
+folded open on request. `index.html` in the runs folder lists all sessions,
+with a session started by a gateway session shown under it. With the
+gateway's dashboard running, the same pages are at
+`http://127.0.0.1:8765/sessions/`.
+
+The logs never record the restricted dataset: if a path or name matching
+its patterns appears in a session, the session writes one
+`restricted_not_recorded` event, without the matching text, and records
+nothing after it.
 
 | Variable | Effect |
 | --- | --- |
