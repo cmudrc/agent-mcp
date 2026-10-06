@@ -33,7 +33,9 @@ Requires:
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
+import math
 import os
 import sys
 import time
@@ -196,6 +198,45 @@ def tool(name: str, schema: dict[str, Any]) -> Callable:
         return fn
 
     return deco
+
+
+#: Tools whose server package a fresh install may not have. The planner is
+#: offered such a tool only when its package imports: on a machine with
+#: OpenAeroStruct the planner picked it for angle sweeps and drag questions
+#: (dry run, 2026-10-05), and on a fresh clone, where the package is absent,
+#: the same choice can only end in ModuleNotFoundError.
+OPTIONAL_TOOL_PACKAGES: dict[str, tuple[str, ...]] = {
+    "run_openaerostruct": ("openaerostruct_mcp", "openaerostruct"),
+    "aviary_run_mission": ("aviary_cpacs_mcp", "aviary"),
+}
+
+
+def _package_present(package: str) -> bool:
+    try:
+        return importlib.util.find_spec(package) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def available_tools() -> dict[str, dict[str, Any]]:
+    """The registered tools whose server package is installed here."""
+    return {
+        name: spec
+        for name, spec in TOOLS.items()
+        if all(_package_present(pkg) for pkg in OPTIONAL_TOOL_PACKAGES.get(name, ()))
+    }
+
+
+def unavailable_tools_note() -> str:
+    """A line for the system prompt naming the tools not offered, or ''."""
+    missing = [n for n in TOOLS if n not in available_tools()]
+    if not missing:
+        return ""
+    return (
+        "\n\nNot installed on this machine, so not offered: "
+        + ", ".join(missing)
+        + ". If the request needs one of them, say so in report_done."
+    )
 
 
 @tool(
@@ -708,6 +749,54 @@ _OAS_DESIGN_VARIABLES = (
 )
 
 
+#: Validity bounds for the vortex-lattice tool's flight point, the same
+#: impossibility bounds the SU2 tool applies (Mach from 0.05, angle within
+#: 30 degrees, altitude -1,500 to 65,000 ft), with Mach kept below 0.95
+#: because the method is a subsonic one. Asked for a converged drag with no
+#: flight condition, the planner passed Mach 0, angle 0 and altitude 0, and
+#: OpenAeroStruct returned CL = NaN instead of refusing (dry run, 2026-10-05).
+_OAS_RANGES = {
+    "mach": (0.05, 0.95),
+    "alpha_deg": (-30.0, 30.0),
+    "altitude_m": (-457.2, 19812.0),
+}
+
+
+def _oas_input_error(request: dict[str, Any]) -> dict[str, Any] | None:
+    for name, (lo, hi) in _OAS_RANGES.items():
+        if name not in request:
+            continue
+        v = request[name]
+        if not (isinstance(v, (int, float)) and math.isfinite(v) and lo <= v <= hi):
+            return {
+                "type": "invalid_input",
+                "message": (
+                    f"Cannot run OpenAeroStruct: {name}={v!r} is outside "
+                    f"[{lo:g}, {hi:g}], the range this subsonic vortex-lattice "
+                    "tool is valid for."
+                ),
+                "details": "Nothing was run and nothing was written to CPACS. State the flight condition explicitly.",
+                "parameter": name,
+                "value": v,
+            }
+    return None
+
+
+def _oas_result_error(cl: Any, cd: Any) -> dict[str, Any] | None:
+    """A non-finite coefficient or a non-positive drag is not a result."""
+    try:
+        cl_f, cd_f = float(cl), float(cd)
+    except (TypeError, ValueError):
+        cl_f = cd_f = math.nan
+    if math.isfinite(cl_f) and math.isfinite(cd_f) and cd_f > 0.0:
+        return None
+    return {
+        "type": "unphysical_result",
+        "message": f"OpenAeroStruct returned CL={cl!r}, CD={cd!r}; that is not a usable result.",
+        "details": "Nothing was written to CPACS. Check the flight condition and the wing the file describes.",
+    }
+
+
 @tool(
     "run_openaerostruct",
     {
@@ -852,10 +941,18 @@ def _openaerostruct(
     }
     request = {k: v for k, v in request.items() if v is not None}
 
+    bad = _oas_input_error(request)
+    if bad is not None:
+        return {"error": bad, "solver": "openaerostruct"}
+
     xml = _read_cpacs(cpacs_path)
     new_xml, summary = a.run_adapter(xml, request)
     summary = dict(summary)
     summary.pop("lift_distribution", None)
+    if summary.get("success"):
+        bad = _oas_result_error(summary.get("CL"), summary.get("CD"))
+        if bad is not None:
+            return {"error": bad, "solver": "openaerostruct"}
 
     if not summary.get("success"):
         # Same rule as the geometry tool: no result, so the error leads and no
@@ -1114,7 +1211,7 @@ def run_agent(
 
     client = ollama.Client()
 
-    schemas = [t["schema"] for t in TOOLS.values()]
+    schemas = [t["schema"] for t in available_tools().values()]
 
     user_message = (
         f"CPACS file: {cpacs_path}\n\nUser request: {user_prompt}\n\n"
@@ -1123,7 +1220,7 @@ def run_agent(
     )
 
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": SYSTEM_PROMPT + unavailable_tools_note()},
         {"role": "user", "content": user_message},
     ]
 

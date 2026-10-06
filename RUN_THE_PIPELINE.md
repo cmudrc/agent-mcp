@@ -734,6 +734,8 @@ Windows, install WSL2 and run `bootstrap.sh` inside it.
 | `Cannot fly a mission: cd0, k, tsfc_1_per_s, max_thrust_n not available` | no CFD and engine results in the file yet | run geometry, CFD and engine first |
 | `missing_input: the CPACS file states no reference area` | your CPACS file lacks `reference/area` and `length` | add them; the tool will not borrow another aircraft's |
 | `invalid_input: mach=0 is outside [0.05, 3]` | flight condition not stated and filled with zero | state Mach, angle and altitude |
+| `inconsistent_inputs: ... SU2 computed that drag at Mach 0.7` (engine or mission tool) | the file's latest CFD or engine result is for another cruise point | run CFD, engine and mission for one cruise point before starting the next |
+| the agent stops right after `No mesh or STEP geometry provided` | it called CFD before exporting the geometry, and its rules stop it at the first error | start the request with "Export the geometry, then ..." |
 | agent prints nothing for a minute or two at the first turn | Ollama is loading the model into memory | wait; the report page shows this as "Model loading" |
 | `model "gemma4:e4b" not found` or a connection error to Ollama | model not pulled, or Ollama not running | `ollama pull gemma4:e4b`; `ollama serve &` or open the Ollama app |
 | `*_out/` directories appearing everywhere | `OPENMDAO_REPORTS` not set | `export OPENMDAO_REPORTS=0` |

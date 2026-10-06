@@ -110,13 +110,38 @@ def _walk(obj: Any, acc: list[float]) -> None:
         acc.extend(_numbers(obj))
 
 
-def _traceable(x: float, pool: list[float]) -> bool:
+def _number_tokens(text: str) -> list[tuple[float, float]]:
+    """Each number in the text with one unit in the last digit written
+    ("1502.09" -> 0.01, "11983" -> 1, "1.78e-5" -> 1e-7)."""
+    out = []
+    for m in NUM.finditer(text or ""):
+        s = m.group(0).replace(",", "")
+        try:
+            v = float(s)
+        except ValueError:
+            continue
+        mant, _, exp = s.lower().partition("e")
+        dec = len(mant.split(".")[1]) if "." in mant else 0
+        out.append((v, 10.0 ** (-dec + (int(exp) if exp else 0))))
+    return out
+
+
+def _traceable(x: float, pool: list[float], unit: float = 0.0) -> bool:
+    """x matches a pool value exactly, as that value rounded or cut to the
+    digits the report wrote (within one unit in the last digit), or rounded
+    to the report's significant figures.
+
+    Until 2026-10-05 any value within 1 percent of a pool value also passed.
+    In a session whose tools returned about 600 numbers, a report's wrong
+    "1502.09 kg saved" passed because a 1500 was among them (dry run B3).
+    The RQ3 reports were re-checked under this rule with no change.
+    """
     if x == 0 or abs(x) < 1e-9:
         return True
     for p in pool:
         if p == x:
             return True
-        if abs(p) > 0 and abs(x - p) / abs(p) <= 0.01:
+        if unit > 0 and abs(x - p) <= unit * (1 + 1e-9):
             return True
         # same value when the pool value is rounded to the significant figures
         # the report used (a report may write 0.21 for 0.2139)
@@ -130,8 +155,8 @@ def _traceable(x: float, pool: list[float]) -> bool:
 
 def untraced_numbers(report: str, events: list[dict[str, Any]], prompt: str) -> dict[str, Any]:
     """Numbers in the final report that no tool result, tool argument, Seeker
-    verdict or the prompt contains (exactly, within 1 percent, or after
-    rounding). Counts 0-12 are skipped, as in the RQ3 tabulation (turns,
+    verdict or the prompt contains (exactly, or after rounding or cutting to
+    the digits the report wrote). Counts 0-12 are skipped, as in the RQ3 tabulation (turns,
     rungs). The Seeker verdict counts because the planner is shown it as a
     tool message and must report it."""
     pool: list[float] = []
@@ -155,8 +180,8 @@ def untraced_numbers(report: str, events: list[dict[str, Any]], prompt: str) -> 
                 ):
                     _walk(m.get("content"), pool)
     pool.extend(_numbers(prompt or ""))
-    found = [x for x in _numbers(report) if not (x.is_integer() and 0 <= x <= 12)]
-    untraced = sorted({x for x in found if not _traceable(x, pool)})
+    found = [(x, u) for x, u in _number_tokens(report) if not (x.is_integer() and 0 <= x <= 12)]
+    untraced = sorted({x for x, u in found if not _traceable(x, pool, u)})
     return {"checked": len(found), "untraced": untraced, "pool_size": len(pool)}
 
 
@@ -1309,8 +1334,10 @@ def report_html(session_dir: Path) -> str:
         untraced = set(tr["untraced"])
         rule = (
             '<div class="muted">A number counts as traced when a tool result, a tool '
-            "argument, the Seeker's verdict or the prompt contains it exactly, within 1 "
-            "percent, or after rounding. Counts from 0 to 12 are not checked.</div>"
+            "argument, the Seeker's verdict or the prompt contains it exactly, or after "
+            "rounding to the digits the answer wrote. A number the planner worked out "
+            "itself, such as a difference, is listed. Counts from 0 to 12 are not "
+            "checked.</div>"
         )
         if tr["untraced"]:
             nums = "".join(

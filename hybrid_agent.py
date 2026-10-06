@@ -412,11 +412,13 @@ def run_hybrid(
         }
     )
 
-    tools = [spec["schema"] for spec in planner_mod.TOOLS.values()]
-    handlers = {n: spec["handler"] for n, spec in planner_mod.TOOLS.items()}
+    offered = planner_mod.available_tools()
+    tools = [spec["schema"] for spec in offered.values()]
+    handlers = {n: spec["handler"] for n, spec in offered.items()}
 
     system_prompt = (
         planner_mod.SYSTEM_PROMPT
+        + planner_mod.unavailable_tools_note()
         + "\n\n## HYBRID-MODE ADDENDUM\n\n"
         + "After any tool that produces a volumetric SU2 result, a "
         + "multimodal SEEKER agent (Gemma 4 E4B) will inspect a rendered "

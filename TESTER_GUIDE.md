@@ -188,8 +188,8 @@ They cannot:
 
 - do structures, loads, stresses or weights;
 - do viscous or RANS CFD: SU2 runs Euler only, so the drag has no skin
-  friction. The tool's description says "Euler / RANS", but it always runs
-  Euler;
+  friction. Every CFD result says so; before it did (until 2026-10-05), the
+  agent called an Euler run "RANS" when asked for RANS;
 - change the geometry (span, sweep, chord): there is no geometry editor;
 - trim the aircraft, optimise a design or size an engine to a thrust you
   give, in one step. The agent can only run the steps you spell out, for
@@ -209,8 +209,16 @@ Behaviours to expect, measured in the project's tests unless marked:
   to it (1,500 nmi asked gave 1,760.7 nm in total, tools called directly,
   2026-10-05).
 - On a fresh aircraft file, ask for geometry, then CFD, then engine, then
-  mission. Out of order, the tools refuse (checked 2026-10-05); when the CFD
-  tool refused, the agent reported it and stopped (measured 2026-09-21).
+  mission. Out of order, the tools refuse (checked 2026-10-05), and the agent
+  stops at the first refusal, as its rules say. In our dry run of the 24
+  prompts on the test sheet (2026-10-05), it called the CFD tool before the
+  geometry in 12 of them, and in 5 it never exported the geometry, so start
+  requests with "Export the geometry, then ...".
+- To compare two cruise points (two Mach numbers, say), ask for the CFD,
+  engine and mission for one point, then for the other. The aircraft file
+  keeps only the latest CFD and engine results, and the engine and mission
+  tools refuse results computed at another Mach number
+  (`inconsistent_inputs`).
 - The planner has added settings you did not ask for, such as the
   workstation preset (3 of 3 runs of one test, 2026-09-23). Unless you state
   the mesh density, that means a finer mesh and a longer run.

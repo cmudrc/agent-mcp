@@ -148,6 +148,19 @@ def test_traced_rules_rounding_and_counts():
     assert V.untraced_numbers("CL is 0.25", events, "")["untraced"] == [0.25]
 
 
+def test_near_miss_is_not_traced_but_rounding_and_truncation_are():
+    # Dry run B3, 2026-10-05: "1502.09 kg saved" passed the old 1 percent rule
+    # because a tool had returned 1500 somewhere in the session.
+    events = [
+        {"kind": "tool_call", "name": "nseg_run_mission", "args": {"range_nmi": 1500}},
+        {"kind": "tool_result", "name": "nseg_run_mission", "result": {"fuel": 7706.014316, "dist": 1760.75}},
+    ]
+    assert V.untraced_numbers("It saves 1502.09 kg.", events, "")["untraced"] == [1502.09]
+    assert V.untraced_numbers("Fuel 7706.01 kg, or 7,706 kg, or 7706.0 kg.", events, "")["untraced"] == []
+    assert V.untraced_numbers("It flew 1760.7 nm in total.", events, "")["untraced"] == []  # cut, not rounded
+    assert V.untraced_numbers("It flew 1770 nm.", events, "")["untraced"] == [1770.0]
+
+
 def test_index_lists_sessions_and_cli(tmp_path, capsys):
     d = _synthetic_session(tmp_path, "CL = 0.178.")
     root = d.parent
