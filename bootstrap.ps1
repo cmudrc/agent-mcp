@@ -1,13 +1,11 @@
-# bootstrap.ps1 -- One-command setup for the CMU DRC MCP pipeline on Windows.
+# bootstrap.ps1 -- Python-side setup for the CMU DRC MCP pipeline on native Windows.
 #
-# Windows is fully supported for the Python/pyCycle/Aviary side of the
-# pipeline. SU2 itself ships pre-built binaries only for Linux/macOS, so
-# this script will:
-#   1. install Python deps + every MCP package (editable) on native Windows,
-#   2. install Ollama (winget if available) and pull the Gemma model,
-#   3. for SU2 fall back to WSL2 (the script will hand off to the bash
-#      bootstrap if WSL is installed), or print clear instructions to
-#      install WSL2 if it isn't.
+# Not the supported Windows route, and never run end to end. The supported
+# route is WSL2 (Ubuntu inside Windows) with bootstrap.sh, verified on a blank
+# Ubuntu 24.04 on 2026-10-06: see RUN_THE_PIPELINE.md, "Windows". This script
+# only installs the Python packages and Ollama on native Windows; the Gmsh
+# mesher and the TiGL geometry export have not been tried on native Windows,
+# so a native install cannot run the geometry or CFD steps as it stands.
 #
 # Usage (from PowerShell in the project root):
 #     pwsh -ExecutionPolicy Bypass -File .\agent-mcp\bootstrap.ps1

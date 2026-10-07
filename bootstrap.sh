@@ -96,6 +96,44 @@ case "$OS" in
         ;;
 esac
 
+# ---------- 1b. system packages the solvers need -----------------------------
+# A blank Ubuntu (which is also what Windows runs this on, inside WSL2) lacks
+# the unzip SU2's archive needs, the zstd Ollama's installer needs, and the
+# graphics libraries the Gmsh mesher and the flow renderer load. Found by
+# installing on a blank Ubuntu 24.04 on 2026-10-06; each absence used to
+# surface much later as a failed step. Checked up front, with the exact
+# command to fix it, so nothing is half-installed.
+if [ "$OS" = "Linux" ]; then
+    MISSING_CMDS=""
+    for c in unzip zstd; do command -v "$c" >/dev/null 2>&1 || MISSING_CMDS="$MISSING_CMDS $c"; done
+    MISSING_LIBS=""
+    if command -v ldconfig >/dev/null 2>&1; then
+        LDCACHE="$(ldconfig -p 2>/dev/null)"
+        for lib in libGLU.so.1 libGL.so.1 libXrender.so.1 libXcursor.so.1 libXfixes.so.3 \
+                   libXft.so.2 libfontconfig.so.1 libXinerama.so.1 libgomp.so.1 libEGL.so.1 libOSMesa.so.8; do
+            echo "$LDCACHE" | grep -q "$lib" || MISSING_LIBS="$MISSING_LIBS $lib"
+        done
+    fi
+    if [ -n "$MISSING_CMDS$MISSING_LIBS" ]; then
+        warn "  missing system packages:${MISSING_CMDS}${MISSING_LIBS}"
+        warn "  On Ubuntu/Debian install them all with:"
+        warn "    sudo apt-get update && sudo apt-get install -y git curl unzip zstd python3.12-venv libglu1-mesa libgl1 libxrender1 libxcursor1 libxfixes3 libxft2 libfontconfig1 libxinerama1 libgomp1 libegl1 libosmesa6"
+        die "Install them, then run this script again (it is safe to rerun)."
+    fi
+    ok "  system packages present"
+fi
+if [ "$OS" = "Darwin" ] && [ "$ARCH" = "arm64" ] && ! command -v SU2_CFD >/dev/null 2>&1 \
+   && [ ! -x "$HOME/.local/su2/bin/SU2_CFD" ]; then
+    # The SU2 release binary is built for Intel Macs and needs Rosetta here.
+    if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+        warn "  This Mac has an Apple-silicon chip and Rosetta is not installed."
+        warn "  The SU2 release binary is built for Intel chips and needs it. Install it once with:"
+        warn "    softwareupdate --install-rosetta --agree-to-license"
+        die "then run this script again."
+    fi
+    ok "  Rosetta present (needed by the Intel-built SU2 binary)"
+fi
+
 PYTHON_BIN=""
 for candidate in python3.13 python3.12 python3; do
     if command -v "$candidate" >/dev/null 2>&1; then
@@ -186,13 +224,18 @@ elif [ -x "$HOME/.local/su2/bin/SU2_CFD" ]; then
     ok "  SU2 already in ~/.local/su2/bin; added to PATH"
 else
     if [ -x "su2-mcp/scripts/install_su2.sh" ]; then
-        bash su2-mcp/scripts/install_su2.sh || warn "  SU2 install reported errors -- check output."
-        [ -x "$HOME/.local/su2/bin/SU2_CFD" ] && export PATH="$HOME/.local/su2/bin:$PATH"
+        bash su2-mcp/scripts/install_su2.sh \
+            || die "SU2 did not install (the message above says why). Fix that and rerun; without SU2 no CFD can run."
+        export PATH="$HOME/.local/su2/bin:$PATH"
     else
-        warn "  su2-mcp/scripts/install_su2.sh not found; install SU2 manually."
-        warn "  See https://su2code.github.io/download.html"
+        die "su2-mcp/scripts/install_su2.sh not found (did the su2-mcp clone fail?)."
     fi
 fi
+# Whatever route put it there, the solver must actually run on this machine.
+if ! SU2_CFD -h >/dev/null 2>&1; then
+    die "SU2_CFD is on PATH but does not run here ($(SU2_CFD -h 2>&1 | head -1)). On an Apple-silicon Mac this usually means Rosetta is missing: softwareupdate --install-rosetta --agree-to-license"
+fi
+ok "  $(SU2_CFD -h 2>&1 | head -1)"
 
 # ---------- 5. Ollama + Gemma ----------------------------------------------
 info "Step 5/7: installing Ollama + pulling Gemma model..."

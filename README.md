@@ -204,7 +204,7 @@ write these logs. `--trace-jsonl` still writes its own file, unchanged.
 The `aircraft_mcp` package in this repository (formerly its own
 `aircraft-mcp` folder) mounts the five servers behind one MCP endpoint,
 with namespaced tools (`tigl_*`, `su2_*`, `pycycle_*`, `nseg_*`,
-`aviary_*`; 62 tools with all five installed, 54 without Aviary). Each
+`aviary_*`; 63 tools with all five installed, 55 without Aviary). Each
 server runs unchanged as its own subprocess; a server that is not installed
 is reported by `gateway_status`, never faked. The servers get the gateway's
 `PATH`, which must contain `~/.local/su2/bin` and `docker`: started with the

@@ -304,8 +304,11 @@ def _tigl(cpacs_path: str, output_dir: str = "pipeline_output") -> dict[str, Any
         }
     _EXPORTED_STEP[str(Path(cpacs_path).resolve())] = str(step_path)
     # The path is what the next call needs, so it leads the response rather
-    # than trailing a long component inventory.
-    return {"step_path": step_path, **summary}
+    # than trailing a long component inventory; the geometry check follows it
+    # because the CFD tool will refuse a geometry with fault findings.
+    out = {"step_path": step_path, "geometry_check": summary.pop("geometry_check", None)}
+    out.update(summary)
+    return out
 
 
 SU2_FLIGHT_DEFAULTS = {"mach": 0.78, "aoa": 2.0, "altitude_ft": 35000.0}
@@ -330,7 +333,10 @@ SU2_FLIGHT_DEFAULTS = {"mach": 0.78, "aoa": 2.0, "altitude_ft": 35000.0}
                 "run with the previous run at the same flight condition and "
                 "states plateau_met (both coefficients within 1 percent and "
                 "the solver's Cauchy criterion fired); report that field, do "
-                "not judge the plateau yourself."
+                "not judge the plateau yourself. Refuses with geometry_fault "
+                "when tigl_export_geometry recorded a geometry fault (a wing "
+                "on one side only, a detached wing, an impossible reference "
+                "area) unless ignore_geometry_findings is true."
             ),
             "parameters": {
                 "type": "object",
@@ -398,6 +404,15 @@ SU2_FLIGHT_DEFAULTS = {"mach": 0.78, "aoa": 2.0, "altitude_ft": 35000.0}
                             "over surface_density; halve it per rung."
                         ),
                     },
+                    "ignore_geometry_findings": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "Run even though the geometry stage recorded fault "
+                            "findings. Only when the user, having seen the "
+                            "findings, asks for it."
+                        ),
+                    },
                 },
                 "required": ["cpacs_path"],
             },
@@ -417,6 +432,7 @@ def _su2(
     surface_density: int | None = None,
     farfield_factor: float | None = None,
     surface_size_m: float | None = None,
+    ignore_geometry_findings: bool = False,
 ) -> dict[str, Any]:
     from su2_mcp import cpacs_adapter as a
 
@@ -467,6 +483,7 @@ def _su2(
         surface_density=surface_density,
         farfield_factor=farfield_factor,
         surface_size_m=surface_size_m,
+        ignore_geometry_findings=bool(ignore_geometry_findings),
     )
     _save_cpacs(cpacs_path, new_xml)
     summary.setdefault("_used_mesh", mesh_path)
@@ -1168,6 +1185,11 @@ SYSTEM_PROMPT = textwrap.dedent("""\
         (lift, drag, L/D, drag minimisation at a target CL). It reads the
         wing from CPACS and takes the flight point (mach, altitude_m) and
         alpha as arguments; one flight point and one alpha per call.
+      * tigl_export_geometry returns geometry_check. If its findings list is
+        not empty, the geometry contradicts its own file (a wing on one side
+        only, a wing not touching the fuselage, an impossible reference
+        area). Report the findings in report_done; su2_run_aero refuses such
+        a geometry, and only the user can ask to run anyway.
       * If the request needs something no tool provides, do not substitute
         a different analysis for it. Run what the tools can do, and say in
         report_done exactly which part could not be done and why.

@@ -14,7 +14,11 @@ model (§7) was run on a fresh clone on 2026-09-24 but not on 10-05, because
 Ollama was busy with another experiment. Not run in either check, because
 they were already present on that machine: the prerequisites, the SU2
 install script, the model pull and the TiGL image build. Nothing inside
-Kiro (§8) has been run yet. Where a step differs on Linux or Windows it says so.
+Kiro (§8) has been run yet. The Linux route, which is also what Windows uses
+(WSL2), was checked on a blank Ubuntu 24.04 on 2026-10-06: the system
+packages listed in §2 are the ones that were missing, and with them every
+step through the CFD run passed. Where a step differs on Linux or Windows it
+says so; the Windows section is at the end of the quick start.
 
 Testers: after the quick start, read [TESTER_GUIDE.md](TESTER_GUIDE.md)
 (a one-hour session) and [PROMPT_TEST_SHEET.md](PROMPT_TEST_SHEET.md)
@@ -35,6 +39,14 @@ xcode-select --install          # git; a dialog opens, accept it
 # Homebrew: paste the one-line command from https://brew.sh, then run the
 # two lines it prints to put brew on your PATH
 brew install python@3.13 ollama
+```
+
+On an Apple-silicon Mac, also install Rosetta once (the SU2 solver is built
+for Intel chips and runs through it; without it the installer stops and
+says so):
+
+```bash
+softwareupdate --install-rosetta --agree-to-license
 ```
 
 Install Docker Desktop from https://www.docker.com/products/docker-desktop/
@@ -83,8 +95,10 @@ bash aircraft-analysis/run_pipeline.sh canards --mcps tigl su2
 ```
 
 It must end with `STEP export: docker_tigl_closed_solids` (TiGL ran in
-Docker), `CL=0.1780455806, CD=0.7398386842` and `Pipeline Complete`. If not,
-see §10.
+Docker) and `Pipeline Complete`. On a Mac the line before gives
+`CL=0.1780455806, CD=0.7398386842`. On Linux (and so on Windows) the mesher
+builds a slightly different mesh and the values differ by some percent;
+§2 gives the Linux values. If the run fails, see §10.
 
 **Step 6. The agent's first run** (a few minutes; the first model call also
 loads the model into memory, which took up to about 2 minutes in our runs):
@@ -110,6 +124,61 @@ time went, and every model call and tool call in full (§7).
 That is the whole path. The sections below explain each piece, the manual
 install if the installer fails, and how to connect another MCP client such
 as Kiro (§8).
+
+### Windows
+
+The pipeline runs on Windows inside WSL2, which is Ubuntu Linux running
+inside Windows; Docker Desktop and Kiro stay on the Windows side. The Linux
+steps were checked on a blank Ubuntu 24.04 (2026-10-06); the first setup on a
+real Windows laptop is in progress (2026-10-07), so expect rough edges and
+tell us about them. The laptop needs an Intel or AMD processor (not ARM), at
+least 16 GB of memory for the agent (the solvers alone run in 8 GB), 30 GB of
+free disk and administrator rights.
+
+**W1. Install Ubuntu.** In PowerShell as administrator, then restart:
+
+```powershell
+wsl --install -d Ubuntu-24.04
+```
+
+After the restart Ubuntu opens and asks for a Linux username (lowercase, no
+spaces) and a password (nothing shows while you type it). If no Ubuntu window
+appears, open "Ubuntu 24.04" from the Start menu. Check in PowerShell that
+`wsl -l -v` lists `Ubuntu-24.04` with VERSION 2.
+
+**W2. Give Ubuntu enough memory.** By default WSL2 gets half the laptop's
+memory, which is too little for the model. In PowerShell:
+
+```powershell
+notepad $env:USERPROFILE\.wslconfig
+```
+
+Say yes when Notepad asks to create the file, paste the lines below (12GB on
+a 16 GB laptop, 20GB on 32 GB; 6GB on an 8 GB laptop, which can run the
+solvers but not the model), save, then run `wsl --shutdown` in PowerShell.
+
+```
+[wsl2]
+memory=12GB
+```
+
+**W3. Docker Desktop.** Install it from docker.com, open it once, and in
+Settings, Resources, WSL integration, switch on `Ubuntu-24.04`.
+
+**W4. Open the Ubuntu app.** Every command from here on goes in the Ubuntu
+window, not PowerShell. Start in the Linux home folder (`cd ~`); the Windows
+drive under `/mnt/c` is slow. Install the system packages:
+
+```bash
+sudo apt-get update && sudo apt-get install -y git curl unzip zstd python3.12-venv libglu1-mesa libgl1 libxrender1 libxcursor1 libxfixes3 libxft2 libfontconfig1 libxinerama1 libgomp1 libegl1 libosmesa6
+```
+
+**W5. Continue with the quick start from step 2**, in the Ubuntu window,
+with three differences: on an 8 GB laptop run the installer with
+`--no-models` and skip step 6; put the `export` line in `~/.bashrc` rather
+than `~/.zshrc`; and at step 7, if no browser opens, run
+`cd ~/aircraft-runs && explorer.exe .` and open the newest folder's
+`report.html` from Windows Explorer. Kiro on Windows has not been set up yet.
 
 ---
 
@@ -159,7 +228,9 @@ while it runs.
 | What | macOS | Linux (Ubuntu/Debian) | Windows |
 |---|---|---|---|
 | git, curl | `xcode-select --install` | `apt-get install git curl` | install WSL2 (`wsl --install`) and follow the Linux column inside it |
-| Python 3.12 or 3.13 | `brew install python@3.13` | `apt-get install python3.13 python3.13-venv` | as Linux, inside WSL2 |
+| Python 3.12 or 3.13 | `brew install python@3.13` | `apt-get install python3.12-venv` (Ubuntu 24.04 ships 3.12; 3.13 is not in its repositories) | as Linux, inside WSL2 |
+| Rosetta (Apple-silicon Macs only; the SU2 binary is Intel-built) | `softwareupdate --install-rosetta --agree-to-license` | not needed | not needed |
+| System libraries for the SU2 archive, Ollama's installer, the Gmsh mesher and the flow renderer | included with macOS | `apt-get install unzip zstd libglu1-mesa libgl1 libxrender1 libxcursor1 libxfixes3 libxft2 libfontconfig1 libxinerama1 libgomp1 libegl1 libosmesa6` | as Linux, inside WSL2 |
 | Docker (for the TiGL geometry export; see §4) | Docker Desktop, https://docker.com | Docker Engine | Docker Desktop with the WSL2 backend |
 | Ollama (only for the agent, §7) | `brew install ollama` or the app from https://ollama.com | the installer does it (`curl -fsSL https://ollama.com/install.sh \| sh`) | inside WSL2, as Linux |
 
@@ -171,6 +242,17 @@ git --version && python3.13 --version && docker --version && ollama --version
 
 On macOS the system `python3` is an older Python; the installer looks for
 `python3.13` or `python3.12` first, which is what Homebrew installs.
+
+The Linux library list was found by installing on a blank Ubuntu 24.04
+(2026-10-06): without `unzip` the SU2 archive cannot be unpacked, without
+`zstd` Ollama's installer stops, and without the graphics libraries the
+mesher fails to load before any CFD run. The installer checks for all of
+them first and prints this command if any is missing. On that Ubuntu the
+quick-start check (step 5) gave `CL=0.2024327654, CD=0.7473544469` on
+42,662 cells (SU2 8.4.0, 2026-10-07); on a Mac the same step gives
+`CL=0.1780455806, CD=0.7398386842` on 41,985 cells. The mesher builds a
+slightly different mesh on each platform, so exact values do not carry
+across; both are coarse smoke-test values, not results.
 
 ---
 
@@ -246,9 +328,12 @@ driver, `aircraft-runs` and `aircraft-mcp` do not.
 ## 4. SU2 and the TiGL Docker image
 
 **SU2** (the CFD solver) is a separate binary. The installer runs this
-script for you; on a manual install run it yourself. It tries conda first,
-then a prebuilt binary from su2code.github.io, and puts `SU2_CFD` in
-`~/.local/su2/bin`:
+script for you; on a manual install run it yourself. It downloads the pinned
+release, SU2 v8.4.0, the version every number in this project was produced
+with (solver versions differ: on the same mesh 8.1.0 gives 7 percent more
+drag), puts `SU2_CFD` in `~/.local/su2/bin`, and refuses to report success
+unless the installed binary runs. `--conda` installs from conda-forge
+instead, which does not carry 8.4.0:
 
 ```bash
 bash su2-mcp/scripts/install_su2.sh
@@ -592,7 +677,7 @@ flags.
 `agent-mcp` (package `aircraft_mcp`). `pip install -e agent-mcp` installs the
 `aircraft-mcp` command. It mounts the installed servers behind a single MCP
 endpoint with namespaced tools (`tigl_*`, `su2_*`, `pycycle_*`, `nseg_*`,
-`aviary_*`; 54 tools without Aviary, 62 with it), adds stage-progress
+`aviary_*`; 55 tools without Aviary, 63 with it), adds stage-progress
 events, an optional local dashboard, and a `run_aircraft_analysis` tool that
 hands a whole analysis to the local Gemma planner:
 
@@ -714,9 +799,10 @@ interactive prompt started on the working copy. If the script fails partway,
 the manual steps above are the same thing spelled out, and it is safe to
 rerun.
 
-`bootstrap.ps1` sets up the Python side on native Windows and leaves SU2 to
-WSL2, where the agent cannot reach it; it has not been run end to end. On
-Windows, install WSL2 and run `bootstrap.sh` inside it.
+`bootstrap.ps1` sets up only the Python side on native Windows and has
+never been run end to end; the geometry export and the mesher have not been
+tried on native Windows. On Windows, install WSL2 and run `bootstrap.sh`
+inside it (quick start, "Windows").
 
 ---
 
@@ -726,6 +812,10 @@ Windows, install WSL2 and run `bootstrap.sh` inside it.
 |---|---|---|
 | `Need Python 3.12 or 3.13` from the installer | only the system Python is installed | `brew install python@3.13` (macOS) |
 | `missing_binary: SU2_CFD not found on PATH` | the `export PATH` line is missing in this shell | `export PATH="$HOME/.local/su2/bin:$PATH"` |
+| `SU2_CFD` prints `Bad CPU type in executable` (Apple-silicon Mac) | Rosetta is not installed; the SU2 binary is Intel-built | `softwareupdate --install-rosetta --agree-to-license` |
+| the installer stops at "missing system packages" (Linux, WSL2) | a blank Ubuntu lacks unzip, zstd or the graphics libraries | run the `apt-get install` line it prints, then rerun the installer |
+| `libGLU.so.1: cannot open shared object file` (or `libGL`, `libgomp`) at the CFD step | the Gmsh mesher's libraries are missing (Linux) | the same `apt-get install` line, in §2 |
+| `aircraft-runs --open` does nothing (WSL2) | no browser inside Ubuntu | `cd ~/aircraft-runs && explorer.exe .` and open the newest folder's `report.html` from Windows |
 | `su2_get_su2_status` says `installed: false` in Kiro or another client, although `SU2_CFD` works in your terminal | the client started the gateway without your `PATH` | set `PATH` in the client's MCP configuration (§8) |
 | `geometry_export_failed ... step_source='unavailable'` | Docker not running, or image not built | `open -a Docker`, then §4 `docker build` |
 | `CPACS file not found: D150_v30.xml` | no working copy in the folder you ran from | `cp aircraft-analysis/examples/D150_v30.xml .` |

@@ -171,7 +171,10 @@ the gateway's in the list.
 
 They can:
 
-- export the geometry of the two example aircraft (TiGL, in Docker);
+- export the geometry of the two example aircraft (TiGL, in Docker), and
+  check it against the file: a wing on one side only, a wing not touching
+  the fuselage, or a reference area that cannot belong to the wing is
+  reported as a fault, and the CFD tool then refuses to run on it;
 - run an inviscid (Euler) CFD case at a Mach number, angle of attack and
   altitude you choose, on a mesh of the fineness you choose, and report
   CL, CD, L/D and the lift and drag forces;
