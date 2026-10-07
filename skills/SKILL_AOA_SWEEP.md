@@ -16,8 +16,7 @@ and any human / script using `scripts/run_aoa_sweep.py`.
 
 Where the open-ended mesh skill holds the angle fixed and grows the mesh
 until CL/CD plateau, this skill holds the **mesh fixed** and varies the
-**angle**. It is the agent realisation of the "iterative angle" milestone
-on the roadmap: the agent is no longer *told* the angle, it *searches*
+**angle**. The agent is no longer *told* the angle, it *searches*
 for the angle that meets a design requirement.
 
 ## When to choose this skill

@@ -1,13 +1,12 @@
 # Primary vs Beta: which agent backend ships by default
 
 > Date: 2026-05-21. Author: Mayank. Audience: Chris, Ron, internal.
+> Superseded by `PRIMARY_VS_BETA_2026-05-27.md`, then by
+> `PRIMARY_VS_BETA_2026-05-28.md`, which made Gemma the default.
 
 ## TL;DR
 
-**Production backend: `qwen2.5:7b`. Beta opt-in: `gemma4:e4b`.
-Promotion of Gemma 4 to default is targeted for Q1 2027** (~6 months
-out, contingent on Ollama-side tool-calling maturity and our own
-prompt-tuning work).
+**Production backend: `qwen2.5:7b`. Beta opt-in: `gemma4:e4b`.**
 
 Decision is grounded in `agentic-bench v0.1.0` results published at
 [`cmudrc/agentic-bench/reports/`](https://github.com/cmudrc/agentic-bench/tree/main/reports).
@@ -29,7 +28,7 @@ temperature 0.0, MacBook 16 GB RAM, Ollama 0.4.x.
 
 ## Why is Gemma 4 slower & weaker today?
 
-A few candidate reasons, worth investigating before promotion:
+A few candidate reasons:
 
 1. **Latent thinking mode.** Gemma 4 has built-in chain-of-thought.
    Even when `enable_thinking=False`, the model has a tendency to emit
@@ -71,29 +70,5 @@ Trigger conditions (any two of three):
 3. **Latency tolerable** – Full suite wall time <= 2× Qwen's. Today
    it's 8.6×.
 
-We will re-benchmark on every Ollama bump and after any internal
-prompt-tuning change. CI will fail the agent repo's release branch if
-the gemma4 score regresses.
-
-## Timeline to promotion
-
-| Date          | Milestone                                                                |
-| ------------- | ------------------------------------------------------------------------ |
-| 2026-06       | Re-benchmark on next Ollama release. Investigate the planning gap.       |
-| 2026-Q3       | Test `gemma4:26b-a4b` (MoE, 3.8 B active). 6.7-point MMLU bump vs E4B.   |
-| 2026-Q3       | Prompt-tuning sprint: forbid thinking preamble, tighten arg schema.      |
-| 2026-Q4       | Add `weights-mcp` so planning items can hit 5/5 with a richer surface.   |
-| 2026-Q4       | Re-benchmark with the prompt tunes. Should close at least 50 % of gap.   |
-| **2027-Q1**   | **Decision point.** If trigger conditions met, promote to default.      |
-
-## Fallback plan if Gemma 4 stalls
-
-If after Q4 2026 the gap hasn't closed:
-
-- Keep Qwen 2.5 7B as the production default.
-- Document Gemma 4 as a multimodality-only opt-in (Seeker role).
-- Re-evaluate whenever Gemma 5 ships or Boeing relaxes the
-  open-weight model constraint.
-
-This is fine. The architecture is model-agnostic; the production
+The architecture is model-agnostic; the production
 backend can change without code changes outside the adapter layer.

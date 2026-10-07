@@ -339,8 +339,6 @@ def make_arch_diagram():
         ("pycycle-mcp", "engine cycle", 8.5, 5.7),
         ("aviary-cpacs-mcp", "Aviary mission", 11.5, 5.3),
         ("nseg-mcp", "NSEG mission", 11.5, 1.7),
-        ("weights-mcp", "mass properties*", 8.5, 1.3),
-        ("(rcaide-mcp)", "stability / noise*", 4.5, 1.3),
         ("hybrid agent", "Qwen + Gemma 4", 1.0, 1.7),
     ]
     for name, sub, cx, cy in mcps:
@@ -473,7 +471,7 @@ def make_hybrid_flow():
         3.2,
         1.1,
         "MCP tools",
-        "TiGL / SU2 / pyCycle /\nAviary / NSEG / Weights",
+        "TiGL / SU2 / pyCycle /\nAviary / NSEG",
         "#ffffff",
         "#374151",
     )

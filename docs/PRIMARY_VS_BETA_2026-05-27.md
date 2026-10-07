@@ -2,6 +2,7 @@
 
 > Date: 2026-05-27. Author: Mayank. Audience: Chris, Ron, internal.
 > Supersedes: `PRIMARY_VS_BETA_2026-05-21.md`.
+> Superseded by `PRIMARY_VS_BETA_2026-05-28.md`, which made Gemma the planner too.
 
 ## TL;DR
 
@@ -65,8 +66,7 @@ smoke-tested it on the same MacBook:
 - Accuracy: the model returned `0.785` and `0.78` (Mach numbers) when
   asked for the cruise *lift coefficient*. It confused CL with M.
 - Verdict: not usable for a live demo or a tight bench loop on 16 GB
-  hardware. Reconsider on a 32 GB+ workstation, or when Ollama ships
-  a smaller q4_K_M tag that holds calibration.
+  hardware.
 
 `--planner qwen3:14b` is left as an opt-in for users with more RAM.
 
@@ -81,8 +81,7 @@ loss vs Qwen's 0.113. Two specific gaps:
 2. **Planning 0.52** vs Qwen's 0.80. Multi-step tool sequences come
    out incomplete or out of order.
 
-Both gaps are likely tunable; we will revisit on the next Ollama
-release.
+Both gaps are likely tunable.
 
 But on the multimodal sub-suite — visual inspection of the 3-panel
 aircraft renders, post image-bug fix — Gemma 4 reasons from the
@@ -109,24 +108,7 @@ collapsing back to a single model. Trigger conditions:
 Until then the hybrid is structurally simpler than asking one model to
 do both jobs well.
 
-## Timeline
 
-| Date     | Milestone                                                                |
-| -------- | ------------------------------------------------------------------------ |
-| 2026-06  | Re-bench `gemma4:e4b` on the next Ollama release; investigate planning gap. |
-| 2026-Q3  | Test `gemma4:26b-a4b` (MoE, 3.8 B active) as a single-model alternative. |
-| 2026-Q3  | Tune the seeker prompt to be less aggressive on mesh-fidelity verdicts.  |
-| 2026-Q4  | Add `weights-mcp` so the planning items hit 5/5 with a richer tool surface. |
-| 2026-Q4  | Re-bench. If still hybrid-best, keep hybrid as production.               |
-| **2027-Q1** | **Decision point.** Single-model Gemma if it crosses both gates.        |
-
-## Fallback plan if hybrid stalls
-
-If the seeker becomes too aggressive (too many false `needs_finer_mesh`
-verdicts driving expensive industry-preset reruns), we ship a
-"verdict-informational" mode where the seeker's output is shown to the
-user but never re-triggers a tool call. The current hybrid prompt
-already supports this when the user pins a preset in the prompt.
 
 ## Architecture-level invariants
 

@@ -3,7 +3,7 @@
 **Date:** 2026-05-14
 **Author:** Mayank
 **Audience:** Chris (CMU), Ron / Allison (Boeing)
-**Status:** Design only. Implementation begins after sign-off.
+**Status:** Historical design proposal, kept as a record; not a current plan. The unit flag (Appendix A) and the data store (Appendix B) were not built. [README.md](README.md) describes what the code does today.
 
 ---
 
@@ -96,12 +96,12 @@ The verdict is consumed by the Planner (Approach A) as just another Observation.
 | Phase | Planner | Seeker | Status |
 |---|---|---|---|
 | **0 (today)** | `qwen2.5:7b` via native tool calling | not present | shipped — see [`gemma_agent.py`](gemma_agent.py) |
-| **1 — ReAct on Gemma** | `gemma3:4b` via the new ReAct harness | not present | next sprint |
-| **2 — Multimodal Seeker** | `gemma3:12b` via ReAct | `gemma3:12b` for vision | following sprint |
+| **1 — ReAct on Gemma** | `gemma3:4b` via the new ReAct harness | not present | proposed |
+| **2 — Multimodal Seeker** | `gemma3:12b` via ReAct | `gemma3:12b` for vision | proposed |
 | **3 — SBD synthesis** | `gemma3:12b` Planner | `gemma3:12b` Seeker | adds an *Answer Agent* pass over a sweep of designs — matches Asgari et al.'s third agent role |
-| **4 — Boeing-cleared swap** | the Boeing-cleared Gemma checkpoint | same | as soon as Boeing clears Gemma |
+| **4 — Boeing-cleared swap** | the Boeing-cleared Gemma checkpoint | same | proposed |
 
-Each phase is shippable. We don't bet the project on Phase 4. If Boeing approves a different model first (LLaMA, Mistral) the harness is model-agnostic, only the model id changes.
+If Boeing approves a different model first (LLaMA, Mistral) the harness is model-agnostic, only the model id changes.
 
 ---
 
@@ -118,7 +118,7 @@ Mac laptop is the development target — anything heavier needs a server tier.
 
 Latency budget per Planner turn: ~3 s text + ~6 s per image at q4. A 6-step run with one Seeker call per step → ~70 s end-to-end. That's well inside what a user will tolerate, and well inside the SU2 runtime (~17 s per case in our sweep) so the bottleneck remains the solver, not the model.
 
-For the **server tier** (when needed), an RTX A6000 / 4090 (24 GB VRAM) host runs `gemma3:27b-q4` at ~40 tok/s. We can stand one up on the lab workstation if Phase 2 demands it; nothing in the design forces it earlier.
+For the **server tier** (when needed), an RTX A6000 / 4090 (24 GB VRAM) host runs `gemma3:27b-q4` at ~40 tok/s.
 
 ---
 
@@ -158,8 +158,8 @@ That is the same defaults policy and same stop-on-error policy we already enforc
 
 ## 6. What we are NOT doing
 
-- Not chasing native Gemma tool calling. If Ollama / DeepMind ship it, great — we drop the ReAct harness and gain 1.5× speed. Until then, ReAct.
-- Not building our own model server. Ollama is sufficient up to the 27B tier on the lab workstation. If we need anything beyond that, we'll evaluate vLLM / TGI then.
+- Not chasing native Gemma tool calling.
+- Not building our own model server. Ollama is sufficient up to the 27B tier on the lab workstation.
 - Not replacing the existing deterministic orchestrator. [`pipeline/shared_cpacs_orchestrator.py`](pipeline/shared_cpacs_orchestrator.py) stays as the reproducible-on-CI fallback. The agent is *another* entry point, not the *only* entry point.
 - Not adding security/safety agents from the Asgari paper. Chris ruled those out as overkill for this test pipeline.
 

@@ -129,7 +129,7 @@ and when.
 | `aviary-cpacs-mcp` | NASA Aviary (optional) | the same mission, trajectory-coupled; heavier install |
 
 A sixth server (`openaerostruct-mcp`, vortex-lattice wing aerodynamics)
-exists but is not published yet; the agent registers its tool and returns a
+exists but is not published; the agent registers its tool and returns a
 missing-module error if asked to use it.
 
 Two more repositories drive them, and the installer also clones a third:

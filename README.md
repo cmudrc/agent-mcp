@@ -321,7 +321,8 @@ No agent in this repo loads the spec files by itself: to have the agent run
 a loop, spell the steps out in the request (as the paper's tests do), or run
 the harness. The engine-resize and cruise-match loops need a design-thrust
 input that the agent's engine tool does not expose, so only their harnesses
-run them today.
+run them today. Both harnesses have been run end to end with the real
+pyCycle/OpenMDAO and NSEG solvers.
 
 - [`skills/SKILL_ADAPTIVE_MESH.md`](skills/SKILL_ADAPTIVE_MESH.md)
   Preset-ladder mesh refinement (`laptop` -> `workstation` ->
@@ -421,24 +422,6 @@ commands we use in front of customers on the development machine,
 including the hybrid-pipeline demo and the open-ended mesh refinement run.
 Its paths assume that machine's project folder; on a new install follow
 [RUN_THE_PIPELINE.md](RUN_THE_PIPELINE.md) instead.
-
-## Roadmap
-
-- **Done (2026-06-22)** -- The iterative-skill family is now four deep:
-  open-ended mesh, AoA sweep / trim, engine resize (pyCycle <-> NSEG),
-  and cross-discipline cruise match (SU2 <-> pyCycle <-> NSEG). Each
-  ships a `SKILL_*.md` and a no-LLM harness with unit tests; the two
-  coupling loops were validated end-to-end against the real
-  pyCycle/OpenMDAO + NSEG solvers.
-- **Q3 2026** -- Promote the open-ended mesh skill (and the converged
-  delivery harness) from "opt-in" to a recommended default for new
-  geometries.
-- **Q4 2026** -- Promote the hybrid from "recommended" to the default
-  in `pipeline/shared_cpacs_orchestrator.py`'s entry point.
-- **Q4 2026** -- Aviary-backed variant of the cruise-match loop
-  (trajectory-level mission in place of NSEG Breguet).
-- **Q1 2027** -- Evaluate larger Gemma family members and the optional
-  Ollama Pi enterprise integration as a managed-inference backend.
 
 ## License
 

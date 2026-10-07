@@ -43,7 +43,7 @@ If anything fails, pause and fix BEFORE going live.
 ## Block 1 -- Architecture slide (~1 min)
 
 Open `agent-mcp/README.md` or the PPT slide showing:
-- Six MCPs around a shared CPACS XML.
+- Five MCP servers around a shared CPACS XML.
 - Agent layer above with Gemma planner + Gemma multimodal seeker.
 - CI is a change-control gate on code, not a runtime check.
 
@@ -176,17 +176,9 @@ the repo for transparency."*
 
 ---
 
-## Block 7 -- RCAIDE outlook (~1 min, slides only)
+## Block 7 -- Wrap (~1 min)
 
-Mention `cmudrc/rcaide-mcp` as a planned 7th MCP (low-fi aero,
-stability, noise, emissions) -- pending RCAIDE licensing conversation
-with UIUC.
-
----
-
-## Block 8 -- Wrap (~1 min)
-
-- 6 MCPs live; 7th (`rcaide-mcp`) under consideration.
+- 5 MCP servers live.
 - 3 agents live: hybrid (production all-Gemma), `gemma_agent`
   (single-model), `gemma_agent_v2` (structured-output fallback for
   Gemma 3).
@@ -229,6 +221,6 @@ cat reports/hybrid_combined.json | jq '.aggregate'
 
 ## Recording the fallback video (do this morning-of)
 
-1. Run Block 0 -> Block 8 in order, talking through each step.
+1. Run Block 0 -> Block 7 in order, talking through each step.
 2. Save as `~/Desktop/mcpproject/demo_recording_<date>.mov`.
 3. Test playback before the meeting.

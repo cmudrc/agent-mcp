@@ -1,9 +1,9 @@
 # Skill: Adaptive Mesh Refinement — "Refine until CL plateaus"
 
 **Date:** 2026-05-20
-**Status:** Design + minimal harness; awaits sign-off before being baked into the agent's default skill set.
+**Status:** Design + minimal harness.
 **Note (2026-09):** superseded for converged delivery by `SKILL_OPEN_ENDED_MESH.md`, whose rungs are defined on cells across the chord. The three presets and this stopping rule remain valid; the preset ladder alone did not reach the plateau on any of the paper's geometries.
-**Audience:** Chris (CMU); reference for the next Gemma agent release.
+**Audience:** Chris (CMU).
 
 ## What this skill does
 
@@ -83,10 +83,8 @@ return {
 | `preset: "laptop"|"workstation"|"industry"` | ✅ added today | `cpacs_adapter.run_adapter`, `MESH_PRESETS` |
 | `cl_convergence_eps: float` | ✅ added today | `cpacs_adapter.run_adapter` → emitted as `CONV_CAUCHY_*` in the SU2 config |
 | `iter_cap`, `wall_timeout_seconds` overrides | ✅ added today | same |
-| `mesh_n_elem` returned in summary | ⚠ partial — `mesh_surface_density` is present; `n_elem` is not yet parsed back out of the .su2 header | one-line addition next iteration |
-| `cauchy_triggered` returned in summary | ⚠ not yet — needs parsing the SU2 stdout for "CAUCHY HISTORY REACHED" message | one-line parser addition |
-
-The two ⚠ items are small follow-ups; the skill works without them today by falling back to "did SU2 hit `iter_cap`?" as a proxy for inner-convergence.
+| `mesh_n_elem` returned in summary | ✅ added after this spec | same adapter, counted from the `.su2` mesh |
+| `cauchy_triggered` returned in summary | ✅ added after this spec | same adapter, from the SU2 log and history file |
 
 ## Agent prompt template (drop into `gemma_agent.py` or the ReAct harness)
 
@@ -110,15 +108,14 @@ Never return CL/CD without also reporting the mesh density that produced them.
 
 ## Reference numbers from today's D150 run (proof the skill makes sense)
 
-Same flight condition (M 0.78, AoA 3°, 35k ft), three presets:
+Same flight condition (M 0.78, AoA 3°, 35k ft), two presets:
 
 | Preset | Surface density | n_elem | CL | CD | L/D | Wall |
 |---|---:|---:|---:|---:|---:|---:|
 | laptop (today's default) | 30 | 49,668 | 0.117 | 0.0259 | 4.54 | 16 s |
 | workstation | 80 | 104,667 | 0.264 | 0.0166 | 15.87 | 43 s |
-| industry (running…) | 200 | (~500 k–2 M est.) | (TBD) | (TBD) | (TBD) | minutes |
 
-Between laptop and workstation: ΔCL/CL = 56%, ΔCD/CD = 36%, ΔL/D more than tripled. Far above the 1% plateau bar — the skill *would have continued* to industry, which is the correct behaviour. After this run finishes the table will be filled in and used as the worked example for the skill.
+Between laptop and workstation: ΔCL/CL = 56%, ΔCD/CD = 36%, ΔL/D more than tripled. Far above the 1% plateau bar — the skill *would have continued* to industry, which is the correct behaviour.
 
 ## Why this is the right "skill" abstraction (per Chris)
 
@@ -132,11 +129,10 @@ Chris's exact wording on May 6: *"Iterative description on decisions (skills); w
 ## What's NOT in this skill (deliberately)
 
 - No automatic *geometry* refinement. The skill refines mesh density only; if the geometry itself is the problem (wrong markers, missing components) the agent surfaces this for human review, per "stop, fix, restart."
-- No RANS upgrade. We stay in Euler for now; switching to RANS is a separate skill.
+- No RANS upgrade. The skill runs Euler only.
 - No design changes (no AoA / Mach sweep inside the skill). Trim sweeps are a *different* skill.
 
 ## File touched by this skill
 
 - [`su2-mcp/src/su2_mcp/cpacs_adapter.py`](su2-mcp/src/su2_mcp/cpacs_adapter.py) — preset + convergence knobs are already in place.
 - [`SU2_TIMING_NOTE.md`](SU2_TIMING_NOTE.md) — explains why `CONV_CAUCHY_*` is the right inner stop.
-- (Future) `gemma_agent.py` — would gain a `--skill amr` flag that loads this prompt template.

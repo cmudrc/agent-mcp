@@ -25,7 +25,7 @@ the plateau condition fires *or* a hard safety cap is hit.
 | Use the preset-ladder skill when... | Use the open-ended skill when... |
 |---|---|
 | The user just wants "trustworthy CL/L/D" | The user asks for "a converged result", "delivery-quality", "production-grade", or names a target like "CL/CD plateau within 0.5%" |
-| You are on a laptop with a 2-hour wall budget | You are on the lab server / Pi-backed inference and can afford multi-hour runs |
+| You are on a laptop with a 2-hour wall budget | You are on the lab server and can afford multi-hour runs |
 | The aircraft is one of the three tested CPACS cases | New geometry where 200 may or may not be enough |
 
 If in doubt, run the preset-ladder skill first; if it ends with
@@ -201,10 +201,10 @@ the mesh resolution to get the desired output."
 
 - Does not change geometry, AoA, Mach, or any other physical input.
   Trim sweeps and design iteration are separate skills (see
-  the iterative-angle roadmap in
-  [`PPTX_FOR_GPT_2026-06-21.md`](../../PPTX_FOR_GPT_2026-06-21.md)).
-- Does not switch solver (Euler stays Euler; RANS upgrade is a
-  separate skill).
+  [`SKILL_AOA_SWEEP.md`](SKILL_AOA_SWEEP.md),
+  [`SKILL_ENGINE_RESIZE.md`](SKILL_ENGINE_RESIZE.md) and
+  [`SKILL_CRUISE_MATCH.md`](SKILL_CRUISE_MATCH.md)).
+- Does not switch solver (Euler stays Euler).
 - Does not silently mesh past `max_n_elem`; it surfaces the projected
   cell count and stops, because the no-stubs rule means the user must
   see honest budget limits, not a fake "converged" claim.
