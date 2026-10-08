@@ -74,10 +74,13 @@ Kiro is AWS's agentic IDE. It needs your own Kiro sign-in, and the setup in
 [RUN_THE_PIPELINE.md §8](RUN_THE_PIPELINE.md#8-running-the-servers-for-another-mcp-client-kiro-and-others)
 (copy two files, fill in three values). We have run them with Kiro CLI
 (2026-10-08): the hand-off route (`run_aircraft_analysis`) returned the
-correct canard values in 2 of 2 runs that Kiro's rate limit let through;
-the direct route, Kiro's own model calling the tools, is measured again now
-that the geometry is handed to the mesher by path. The Kiro IDE itself has
-not been tried; tell us where its steps go wrong.
+correct canard values in 2 of 2 runs that Kiro's rate limit let through.
+In the direct route, Kiro's own model calling the tools, 3 of 3 runs reached
+the solver after the geometry hand-off was changed to a file path, and none
+reported the right values: each model wrote its own solver setup. The solver
+tools now refuse the setups that caused this (2026-10-08); the direct route
+has not been measured again since. The Kiro IDE itself has not been tried;
+tell us where its steps go wrong.
 
 Before you use Kiro, know where your text goes. What you type in Kiro, and
 every tool result its model reads, is sent to Kiro's cloud models. With a
@@ -101,9 +104,11 @@ In Kiro's chat, there are two ways to work:
    `timeout_seconds`.
 2. **Let Kiro's own model call the individual tools** (about 60 of them:
    `tigl_open_cpacs`, `tigl_export_configuration_cad`,
-   `su2_generate_mesh_from_step`, and so on). This is harder: our local
-   model completed 0 of 5 such runs (2026-10-02). Kiro's own models have not
-   been measured on it.
+   `su2_generate_mesh_from_step`, and so on). This is harder. Our local
+   model completed 0 of 5 such runs (2026-10-02). Kiro's own models (its
+   default and Claude Sonnet 4.5) reached the solver in 3 of 3 runs on
+   2026-10-08 but got the right lift and drag in none. For lift and drag,
+   ask Kiro to call `su2_run_aero`, the one-call CFD tool.
 
 Use full paths for aircraft files in Kiro. While the gateway runs, a
 progress page is at http://127.0.0.1:8765 (current stage, recent calls,
