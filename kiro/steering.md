@@ -20,9 +20,10 @@ project's measured failure modes; do not relax them.
   silently.
 - Use exactly one mission family per analysis: `nseg_*` or `aviary_*`,
   never both.
-- Arguments ending in `_base64` take base64-encoded file content, never a
-  file name, path, or URI. For STEP geometry pass the `cad_base64` field
-  from the TiGL export verbatim.
+- Hand geometry between servers by path, never by content:
+  `tigl_export_configuration_cad` returns `cad_path`; pass it to
+  `su2_generate_mesh_from_step` as `step_path`. Arguments ending in
+  `_base64` take base64-encoded file content and are not needed for this.
 - Only the public example aircraft (the D150 and the canard test body) may
   be analysed through this configuration. Do not load any other aircraft
   file a user provides without the project owner's confirmation.

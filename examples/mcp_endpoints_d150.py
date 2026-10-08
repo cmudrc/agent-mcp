@@ -161,11 +161,11 @@ async def main() -> None:
                 timeout=900,
             )
         )
-        if "cad_base64" not in exported:
+        if "cad_path" not in exported:
             _fail("tigl export_configuration_cad", exported)
         print(
             f"STEP exported: source={exported.get('source')}, "
-            f"{len(exported['cad_base64']) * 3 // 4:,} bytes"
+            f"{exported['cad_bytes']:,} bytes at {exported['cad_path']}"
         )
 
     # ---- su2-mcp: session -> mesh -> solve -> history -------------------
@@ -190,7 +190,7 @@ async def main() -> None:
                 "generate_mesh_from_step",
                 {
                     "session_id": sid,
-                    "step_base64": exported["cad_base64"],
+                    "step_path": exported["cad_path"],
                     # The laptop preset's sizing: span-based density 30.
                     "surface_density": 30,
                     "gmsh_timeout_seconds": 900,

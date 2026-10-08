@@ -40,7 +40,9 @@ R4. Never state a physical number that did not come from a tool response in
     this session.
 R5. Geometry before aerodynamics: export CAD before meshing or solving.
 R6. Arguments ending in _base64 take base64-encoded file CONTENT (pass the
-    cad_base64 field from the TiGL export verbatim), never a path.
+    cad_base64 field from the TiGL export verbatim), never a path. Since
+    2026-10-08 the export also returns cad_path and the mesher takes
+    step_path, which is the route a client without @stash should use.
 R7. Use exactly one mission family (nseg_* or aviary_*) per analysis.
 R8. Large tool-result values are replaced in your context by a token like
     @stash:ab12cd (you also see the field name and size). To use that value
