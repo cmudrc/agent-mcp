@@ -72,8 +72,12 @@ and start again.
 
 Kiro is AWS's agentic IDE. It needs your own Kiro sign-in, and the setup in
 [RUN_THE_PIPELINE.md §8](RUN_THE_PIPELINE.md#8-running-the-servers-for-another-mcp-client-kiro-and-others)
-(copy two files, fill in three values). We have not yet run these steps inside
-Kiro ourselves, so tell us where they go wrong.
+(copy two files, fill in three values). We have run them with Kiro CLI
+(2026-10-08): the hand-off route (`run_aircraft_analysis`) returned the
+correct canard values in 2 of 2 runs that Kiro's rate limit let through;
+the direct route, Kiro's own model calling the tools, is measured again now
+that the geometry is handed to the mesher by path. The Kiro IDE itself has
+not been tried; tell us where its steps go wrong.
 
 Before you use Kiro, know where your text goes. What you type in Kiro, and
 every tool result its model reads, is sent to Kiro's cloud models. With a

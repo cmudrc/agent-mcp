@@ -27,7 +27,11 @@ Full setup steps, and what is and is not verified, are in
 
 ## Hooks: recording a Kiro session
 
-**Written from Kiro's documentation, not yet verified inside Kiro.** The
+**Written from Kiro's documentation for the Kiro IDE. Checked 2026-10-08 with
+Kiro CLI 2.28.0: the CLI did not run these hooks (no `kiro-*` session folder
+and no hook error log after eight sessions); the gateway's own session log
+recorded every tool call regardless, so nothing was lost. Not yet tried in
+the IDE.** The
 file follows the hook format described at <https://kiro.dev/docs/hooks>
 (read 2026-10-05): JSON files in `.kiro/hooks/` with `"version": "v1"` and
 a `hooks` list, each hook naming a `trigger` (`SessionStart`,
