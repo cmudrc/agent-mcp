@@ -355,3 +355,10 @@ def test_restricted_session_renders_without_content(tmp_path):
     assert s["outcome"] == "Not recorded: restricted data" and s["restricted"]
     page = V.report_html(rl.path)
     assert "Recording stopped: restricted data" in page
+
+
+def test_unicode_minus_is_read_as_a_sign():
+    events = [{"kind": "tool_result", "name": "x", "result": {"CMz": -0.007239541877, "rms": -2.634}}]
+    text = "CMz \u22120.007240; rms[\u03c1] = \u22122.634"
+    assert V.untraced_numbers(text, events, "")["untraced"] == []
+    assert V.untraced_numbers("CMz 0.007240; rms 2.634", events, "")["untraced"] == [0.00724, 2.634]

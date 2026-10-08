@@ -83,9 +83,16 @@ NUM = re.compile(
 )
 
 
+def _ascii_minus(text: str | None) -> str:
+    """A Unicode minus sign (U+2212) written by a model counts as a sign.
+    Kiro's final text (A6, 2026-10-08) wrote "\u22122.634" for the solver's
+    -2.634; read as +2.634 it was flagged as untraced."""
+    return (text or "").replace("\u2212", "-")
+
+
 def _numbers(text: str) -> list[float]:
     out = []
-    for m in NUM.finditer(text or ""):
+    for m in NUM.finditer(_ascii_minus(text)):
         try:
             out.append(float(m.group(0).replace(",", "")))
         except ValueError:
@@ -114,7 +121,7 @@ def _number_tokens(text: str) -> list[tuple[float, float]]:
     """Each number in the text with one unit in the last digit written
     ("1502.09" -> 0.01, "11983" -> 1, "1.78e-5" -> 1e-7)."""
     out = []
-    for m in NUM.finditer(text or ""):
+    for m in NUM.finditer(_ascii_minus(text)):
         s = m.group(0).replace(",", "")
         try:
             v = float(s)
