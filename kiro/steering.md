@@ -28,23 +28,36 @@ project's measured failure modes; do not relax them.
   be analysed through this configuration. Do not load any other aircraft
   file a user provides without the project owner's confirmation.
 
-## CFD: one call for lift and drag
-- For lift and drag, call `su2_run_aero` (the CPACS path; `step_path` from
-  the export; `preset`, `mach`, `aoa`, `altitude_ft`). It writes the solver
-  setup this project has validated and returns CL, CD, L/D, the cell count,
-  the convergence flag and `refinement.plateau_met`. The reference values
-  for the test cases come from this tool.
+## Whole steps: the one-call tools
+- Work on a CPACS file with the one-call tools, in this order:
+  `tigl_export_geometry` (exports the STEP, checks the shape, returns
+  `step_path` and `geometry_check`), then `su2_run_aero` (pass that
+  `step_path`; `preset`, `mach`, `aoa`, `altitude_ft`; returns CL, CD, L/D,
+  the cell count, the convergence flag and `refinement.plateau_met`), then,
+  if asked, `pycycle_run_engine` and one mission tool,
+  `nseg_run_cpacs_mission` or `aviary_run_cpacs_mission`. Each reads and
+  writes the shared CPACS file, so later steps use earlier results. These
+  are the same tools the local agent uses; the reference values for the
+  test cases come from them.
 - Use the raw `su2_*` tools (session, mesh, config, solver, history) only
-  when the user asks for a custom solver setup. A new session starts from
-  the laptop preset's settings with the case unset: set MACH_NUMBER, AOA and
-  REF_AREA with `su2_update_config_entries` before `su2_run_su2_solver`,
-  which refuses to run without them or without MARKER_MONITORING (forces
-  are evaluated only on those surfaces; without it SU2 writes CL = CD = 0).
-  Do not rewrite the config file with other tools; use the config tools.
-- Read CL and CD from `su2_read_history_csv` (columns `"CL"` and `"CD"`),
-  never from the screen table in the solver log: unless SCREEN_OUTPUT says
-  otherwise its columns are residuals, and on 2026-10-08 a model reported
-  two of them as CL and CD.
+  when the user asks for a custom solver setup. A new raw session starts
+  from the laptop preset's settings with the case unset: set MACH_NUMBER,
+  AOA and REF_AREA with `su2_update_config_entries` before
+  `su2_run_su2_solver`, which refuses to run without them or without
+  MARKER_MONITORING (forces are evaluated only on those surfaces; without it
+  SU2 writes CL = CD = 0). Do not rewrite the config file with other tools.
+- Read CL and CD from the tool result, or from `su2_read_history_csv`
+  (columns `"CL"` and `"CD"`), never from the screen table in a solver log:
+  unless SCREEN_OUTPUT says otherwise its columns are residuals, and on
+  2026-10-08 a model reported two of them as CL and CD.
+
+## One aircraft file per session
+- A session works on one CPACS file. A call on a second file is refused
+  with `working_file_locked`; tell the user and suggest a new chat for the
+  other file. Do not copy or rename files to get around it.
+- To compare several files (for example "which file has the largest
+  wingspan"), call `compare_cpacs_files` with all the paths. It reads them,
+  runs no solver and writes nothing. Then analyse the chosen file.
 
 ## Fidelity and cost
 - `surface_density=30` is the quick laptop mesh (~1 min per case),

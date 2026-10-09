@@ -34,6 +34,7 @@ _STAGES: tuple[tuple[str, str], ...] = (
     ("render_flow_image", "Result files"),
     ("report_done", "Report"),
     ("run_aircraft_analysis", "Local agent run"),
+    ("compare_cpacs_files", "Geometry"),
 )
 
 #: Typical wall times measured on the development laptop (2026-09/10 run

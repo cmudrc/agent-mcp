@@ -386,3 +386,111 @@ def test_gateway_puts_su2_on_path(monkeypatch, tmp_path):
     # idempotent
     server._ensure_solver_path()
     assert os.environ["PATH"].split(os.pathsep).count(str(su2)) == 1
+
+
+# ---- 2026-10-08: one-call tools, one file per session, session id ----------
+
+PUBLIC = Path(__file__).resolve().parent.parent  # the project root holds the public example files
+
+
+def test_gateway_offers_the_one_call_tools_without_name_clashes(tmp_path):
+    skip = {p for p, _ in SERVERS}
+    gw, _, _ = build_gateway(state_dir=tmp_path, skip=skip)
+
+    async def check():
+        async with Client(gw) as c:
+            tools = {t.name: t for t in await c.list_tools()}
+            for name in ("tigl_export_geometry", "su2_run_aero", "pycycle_run_engine",
+                         "nseg_run_cpacs_mission", "export_flow_field", "render_flow_image",
+                         "compare_cpacs_files"):
+                assert name in tools, name
+            props = tools["su2_run_aero"].inputSchema["properties"]
+            assert {"cpacs_path", "mach", "aoa", "altitude_ft", "step_path", "preset"} <= set(props)
+            status = (await c.call_tool("gateway_status", {})).data
+            assert "su2_run_aero" in status["one_call_tools"]
+            assert status["working_file"] is None
+
+    asyncio.run(check())
+
+
+def test_one_call_tool_runs_the_local_handler_and_the_second_file_is_refused(tmp_path, monkeypatch):
+    """The gateway's su2_run_aero is the local agent's registered handler, so it
+    sits behind the same one-file rule; the hand-off is refused for a second
+    file as well. The solver is replaced by a stand-in that records its calls."""
+    import gemma_agent as g
+
+    ran: list[str] = []
+
+    def stand_in(cpacs_path: str, mach: float | None = None) -> dict:
+        ran.append(cpacs_path)
+        return {"CL": 0.1, "CD": 0.01}
+
+    # Register the stand-in through the agent's own decorator, so it gets
+    # exactly the wrapper the real handler has.
+    schema = g.TOOLS["su2_run_aero"]["schema"]
+    real = g.TOOLS["su2_run_aero"]
+    g.tool("su2_run_aero", schema)(stand_in)
+    try:
+        skip = {p for p, _ in SERVERS}
+        gw, _, _ = build_gateway(state_dir=tmp_path, skip=skip)
+        a, b = str(tmp_path / "a.xml"), str(tmp_path / "b.xml")
+
+        async def check():
+            async with Client(gw) as c:
+                r1 = await c.call_tool("su2_run_aero", {"cpacs_path": a}, raise_on_error=False)
+                assert r1.data == {"CL": 0.1, "CD": 0.01}
+                r2 = await c.call_tool("su2_run_aero", {"cpacs_path": b}, raise_on_error=False)
+                assert r2.data["error"]["type"] == "working_file_locked"
+                r3 = await c.call_tool("run_aircraft_analysis", {"prompt": "x", "cpacs_path": b}, raise_on_error=False)
+                assert r3.data["error"]["type"] == "working_file_locked"
+                status = (await c.call_tool("gateway_status", {})).data
+                assert status["working_file"] == str(Path(a).resolve())
+
+        asyncio.run(check())
+    finally:
+        g.TOOLS["su2_run_aero"] = real
+    assert ran == [a]
+
+
+def test_compare_cpacs_files_reads_several_public_files_and_writes_nothing(tmp_path):
+    from aircraft_mcp.one_call import compare_cpacs_files
+
+    files = [PUBLIC / "D150_v30.xml", PUBLIC / "canards.xml", PUBLIC / "D250.xml"]
+    before = {f: f.stat().st_mtime for f in files}
+    out = compare_cpacs_files([str(f) for f in files])
+    assert [f.stat().st_mtime for f in files] == list(before.values())
+    by_name = {Path(e["cpacs_path"]).name: e for e in out["files"]}
+    assert by_name["D150_v30.xml"]["main_wing_span_m"] is not None
+    assert len(by_name["D150_v30.xml"]["wings"]) == 3
+    assert Path(out["largest_main_wing_span"]["cpacs_path"]).name == "D250.xml"
+    refused = compare_cpacs_files([str(tmp_path / "dlr_restricted_case" / "aircraft.xml")])
+    assert refused["files"][0]["error"]["type"] == "restricted_data_refused"
+
+
+def test_compare_is_not_locked_but_a_raw_open_of_a_second_file_is(tmp_path):
+    skip = {p for p, _ in SERVERS}
+    gw, _, _ = build_gateway(state_dir=tmp_path, skip=skip)
+    from aircraft_mcp import run_files
+    from aircraft_mcp.middleware import refusal_for
+
+    run_files.claim_working_file(str(PUBLIC / "D150_v30.xml"), "test")
+    assert refusal_for("compare_cpacs_files", {"cpacs_paths": [str(PUBLIC / "D250.xml")]}) is None
+    raw = refusal_for("tigl_open_cpacs", {"source_type": "path", "source": str(PUBLIC / "D250.xml")})
+    assert raw["error"]["type"] == "working_file_locked"
+    assert refusal_for("tigl_open_cpacs", {"source_type": "path", "source": str(PUBLIC / "D150_v30.xml")}) is None
+    restricted_hit = refusal_for("su2_run_aero", {"cpacs_path": "/data/dlr_restricted/x.xml"})
+    assert restricted_hit["error"]["type"] == "restricted_data_refused"
+
+
+def test_gateway_allocates_its_session_id_and_passes_it_on(tmp_path):
+    skip = {p for p, _ in SERVERS}
+    gw, _, _ = build_gateway(state_dir=tmp_path, skip=skip)
+    sid = os.environ["AIRCRAFT_SESSION_ID"]
+
+    async def check():
+        async with Client(gw) as c:
+            status = (await c.call_tool("gateway_status", {})).data
+            assert Path(status["session_log"]).name == sid
+            assert Path(status["output_folder"]).name == sid
+
+    asyncio.run(check())

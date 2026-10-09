@@ -677,7 +677,9 @@ flags.
 `agent-mcp` (package `aircraft_mcp`). `pip install -e agent-mcp` installs the
 `aircraft-mcp` command. It mounts the installed servers behind a single MCP
 endpoint with namespaced tools (`tigl_*`, `su2_*`, `pycycle_*`, `nseg_*`,
-`aviary_*`; 55 tools without Aviary, 63 with it), adds stage-progress
+`aviary_*`), offers the local agent's one-call tools and
+`compare_cpacs_files` as well (72 tools with Aviary and OpenAeroStruct, 62
+without either), works on one aircraft file per session, adds stage-progress
 events, an optional local dashboard, and a `run_aircraft_analysis` tool that
 hands a whole analysis to the local Gemma planner:
 

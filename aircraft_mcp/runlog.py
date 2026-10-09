@@ -134,6 +134,10 @@ def logging_enabled() -> bool:
     return os.environ.get("AIRCRAFT_LOG", "1").strip().lower() not in _OFF
 
 
+#: A session id as new_session_id makes it (also accepted when allocated by a caller).
+SAFE_SESSION_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
 def new_session_id(now: datetime | None = None) -> str:
     now = now or datetime.now(timezone.utc)
     return f"{now:%Y%m%d-%H%M%S}-{secrets.token_hex(3)}"
@@ -315,19 +319,27 @@ class RunLog:
         meta: dict[str, Any] | None = None,
         announce: bool = True,
         root: Path | None = None,
+        session_id: str | None = None,
     ) -> RunLog:
         """Create a new session folder and write session_start.
 
         Returns a disabled log when AIRCRAFT_LOG=0 or the folder cannot be
         created; in the second case a warning says the session is not logged.
+
+        ``session_id`` names the folder when the caller allocated the id in
+        advance (the gateway does, so the servers it starts know it); it must
+        be unused. The id is also put in ``AIRCRAFT_SESSION_ID`` for this
+        process, so the CPACS writers can name the session in the file's
+        header/updates entries and the agent's output folder carries it.
         """
         if not logging_enabled():
             return cls.disabled()
         base = Path(root) if root is not None else runs_dir()
         try:
             base.mkdir(parents=True, exist_ok=True)
-            for _ in range(5):
-                sid = new_session_id()
+            wanted = [session_id] if session_id and SAFE_SESSION_ID.match(session_id) else []
+            for attempt in range(5 + len(wanted)):
+                sid = wanted[attempt] if attempt < len(wanted) else new_session_id()
                 path = base / sid
                 try:
                     path.mkdir()
@@ -346,6 +358,7 @@ class RunLog:
             return cls.disabled()
 
         rl = cls(path, sid)
+        os.environ["AIRCRAFT_SESSION_ID"] = sid
         info: dict[str, Any] = {
             "session": sid,
             "agent": agent,

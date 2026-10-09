@@ -33,6 +33,7 @@ Requires:
 from __future__ import annotations
 
 import argparse
+import functools
 import importlib.util
 import json
 import math
@@ -84,67 +85,18 @@ for sub in (
     if p.is_dir() and str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
+from aircraft_mcp import run_files as _rf  # noqa: E402  (per-run folders, one file per session)
 
-# ---- Artifact auto-discovery ------------------------------------------------
+
+# ---- Geometry and mesh hand-off -----------------------------------------------
 #
-# SU2 needs a mesh (.su2) or STEP file. TiGL on this Mac uses an amd64 Docker
-# image that fails on arm64 CPUs. To make the agent reliable for the demo,
-# we auto-discover prior STEP/mesh artifacts from the canonical run dirs
-# whenever the user is operating on a known CPACS file.
-
-# Map a CPACS filename stem -> a tuple of dirs to look in first for prior runs.
-_AIRCRAFT_DIRS: dict[str, tuple[str, ...]] = {
-    "d150": (
-        "pipeline/d150_final",
-        "pipeline_test_2026_05_06/d150_nseg/su2_run",
-        "pipeline_test_2026_05_06/d150_aviary/su2_run",
-    ),
-    "canard": ("pipeline/canards_run",),
-    "bwb": ("pipeline/bwb_run",),
-}
-# Restricted datasets are deliberately absent from both of these maps. Auto
-# discovery must never reach a licensed dataset directory: the fallback list is
-# searched for any aircraft that does not match a key above, so an entry here
-# could attach one aircraft's geometry to another's analysis.
-_FALLBACK_DIRS = (
-    "pipeline/d150_final",
-    "pipeline_test_2026_05_06/d150_nseg/su2_run",
-    "pipeline_test_2026_05_06/d150_aviary/su2_run",
-    "pipeline/canards_run",
-    "pipeline/bwb_run",
-)
-
-
-def _find_existing_artifact(suffix: str, cpacs_path: str | None = None) -> str | None:
-    """Find the most recent file matching the suffix, preferring directories
-    that line up with the aircraft named in the CPACS filename.
-
-    suffix: '.step' or '.su2'
-    """
-    preferred: tuple[str, ...] = ()
-    if cpacs_path:
-        stem = Path(cpacs_path).stem.lower()
-        for key, dirs in _AIRCRAFT_DIRS.items():
-            if key in stem:
-                preferred = dirs
-                break
-
-    def _scan(dirs: tuple[str, ...]) -> list[Path]:
-        out: list[Path] = []
-        for d in dirs:
-            full = _PROJECT_ROOT / d
-            if not full.is_dir():
-                continue
-            for f in full.iterdir():
-                if f.is_file() and f.suffix == suffix and f.stat().st_size > 100:
-                    out.append(f)
-        return out
-
-    candidates = _scan(preferred) or _scan(_FALLBACK_DIRS)
-    if not candidates:
-        return None
-    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return str(candidates[0])
+# The CFD tool takes the STEP file the geometry tool exported in THIS process
+# for the same CPACS file (_EXPORTED_STEP below), or a path the caller names.
+# Until 2026-10-08 it also fell back to the newest .step/.su2 in demo-era run
+# folders (pipeline/d150_final and others), resolved under agent-mcp/ where
+# they did not exist; that dead fallback could only ever have attached an old
+# aircraft's mesh to a modified file, and was removed. Outputs go to this
+# run's own folder (aircraft_mcp.run_files).
 
 
 # ---- Tool registry ----------------------------------------------------------
@@ -191,10 +143,30 @@ def _save_cpacs(path: str, xml: str) -> None:
 
 
 def tool(name: str, schema: dict[str, Any]) -> Callable:
-    """Decorator to register a tool callable with its Ollama schema."""
+    """Decorator to register a tool callable with its Ollama schema.
+
+    A tool that takes ``cpacs_path`` is registered behind the one-file rule
+    (aircraft_mcp.run_files.claim_working_file): once a session has worked on
+    one aircraft file, a call on another is refused before anything runs, so
+    results from two aircraft cannot mix (2026-10-08). The module-level
+    function itself stays unwrapped.
+    """
 
     def deco(fn: Callable) -> Callable:
-        TOOLS[name] = {"schema": schema, "handler": fn}
+        props = schema.get("function", {}).get("parameters", {}).get("properties", {})
+        handler = fn
+        if "cpacs_path" in props:
+
+            @functools.wraps(fn)
+            def handler(*args: Any, **kwargs: Any) -> Any:
+                path = kwargs.get("cpacs_path", args[0] if args else None)
+                if isinstance(path, str) and path.strip():
+                    refused = _rf.claim_working_file(path, name)
+                    if refused is not None:
+                        return refused
+                return fn(*args, **kwargs)
+
+        TOOLS[name] = {"schema": schema, "handler": handler}
         return fn
 
     return deco
@@ -259,8 +231,11 @@ def unavailable_tools_note() -> str:
                     },
                     "output_dir": {
                         "type": "string",
-                        "description": "Directory to write the STEP file.",
-                        "default": "pipeline_output",
+                        "description": (
+                            "Optional folder for the STEP file. Left out, the "
+                            "file goes to this run's own folder, "
+                            "pipeline_output/<session id>/geometry_NN."
+                        ),
                     },
                 },
                 "required": ["cpacs_path"],
@@ -268,15 +243,16 @@ def unavailable_tools_note() -> str:
         },
     },
 )
-def _tigl(cpacs_path: str, output_dir: str = "pipeline_output") -> dict[str, Any]:
+def _tigl(cpacs_path: str, output_dir: str | None = None) -> dict[str, Any]:
     from tigl_mcp import cpacs_adapter as a
 
     # RQ3 bounds tier (2026-09-23): the planner passed output_dir="" in three
     # of three repeats of one prompt; the adapter treats an empty directory as
     # "do not export" and the run died at the geometry step for no physical
-    # reason. An empty or missing directory means the default.
-    if not output_dir or not str(output_dir).strip():
-        output_dir = "pipeline_output"
+    # reason. An empty, missing or old fixed folder means this run's own
+    # numbered folder (2026-10-08: every run used to overwrite the last).
+    if _rf.is_default(output_dir):
+        output_dir = str(_rf.next_folder("geometry"))
     xml = _read_cpacs(cpacs_path)
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     new_xml, summary = a.run_adapter(xml, output_dir=output_dir)
@@ -355,7 +331,11 @@ SU2_FLIGHT_DEFAULTS = {"mach": 0.78, "aoa": 2.0, "altitude_ft": 35000.0}
                     },
                     "output_dir": {
                         "type": "string",
-                        "default": "pipeline_output/su2_run",
+                        "description": (
+                            "Optional folder for the mesh and solver files. Left "
+                            "out, each run gets its own folder, "
+                            "pipeline_output/<session id>/cfd_NN."
+                        ),
                     },
                     "preset": {
                         "type": "string",
@@ -426,7 +406,7 @@ def _su2(
     altitude_ft: float | None = None,
     step_path: str | None = None,
     mesh_path: str | None = None,
-    output_dir: str = "pipeline_output/su2_run",
+    output_dir: str | None = None,
     preset: str = "laptop",
     cl_convergence_eps: float | None = None,
     surface_density: int | None = None,
@@ -449,26 +429,22 @@ def _su2(
         SU2_FLIGHT_DEFAULTS["altitude_ft"] if altitude_ft is None else altitude_ft
     )
 
-    # Auto-discover an existing mesh/STEP if the agent didn't pass one.
-    # Prefer artifacts from the same aircraft (filename match) so we don't
-    # mix a D150 CPACS with another aircraft's mesh, etc.
-    # When the user asks for a non-laptop preset OR a custom surface
-    # density, force a fresh mesh from the STEP so we actually exercise
-    # the requested density.
+    # Geometry: the STEP this process exported from the same CPACS file,
+    # unless the caller names a STEP or mesh. A non-laptop preset or a custom
+    # size forces a fresh mesh from the STEP so the requested density is what
+    # runs.
     exported = _EXPORTED_STEP.get(str(Path(cpacs_path).resolve()))
     if exported is not None and not Path(exported).is_file():
         exported = None
     if preset != "laptop" or surface_density is not None or surface_size_m is not None:
         mesh_path = None
         if step_path is None:
-            step_path = exported or _find_existing_artifact(".step", cpacs_path)
-    elif mesh_path is None and step_path is None:
-        if exported is not None:
             step_path = exported
-        else:
-            mesh_path = _find_existing_artifact(".su2", cpacs_path)
-            if mesh_path is None:
-                step_path = _find_existing_artifact(".step", cpacs_path)
+    elif mesh_path is None and step_path is None:
+        step_path = exported
+    geometry_from_this_session = step_path is not None and step_path == exported
+    if _rf.is_default(output_dir):
+        output_dir = str(_rf.next_folder("cfd"))
 
     xml = _read_cpacs(cpacs_path)
     fc = {"mach": mach, "aoa": aoa, "altitude_ft": altitude_ft}
@@ -502,6 +478,7 @@ def _su2(
     return {
         "flight_condition_defaults_applied": defaults_applied,
         "refinement": refinement,
+        "geometry_exported_this_session": geometry_from_this_session,
         **summary,
     }
 
@@ -1087,7 +1064,10 @@ def _export_flow_field(
                     "cpacs_path": {"type": "string"},
                     "output_path": {
                         "type": "string",
-                        "default": "pipeline_output/flow_render.png",
+                        "description": (
+                            "Optional PNG path. Left out, the image is saved "
+                            "beside the flow file of the run it shows."
+                        ),
                     },
                 },
                 "required": ["cpacs_path"],
@@ -1096,11 +1076,13 @@ def _export_flow_field(
     },
 )
 def _render_flow_image(
-    cpacs_path: str, output_path: str = "pipeline_output/flow_render.png"
+    cpacs_path: str, output_path: str | None = None
 ) -> dict[str, Any]:
     found = _export_flow_field(cpacs_path)
     if "error" in found:
         return found
+    if _rf.is_default(output_path):
+        output_path = str(Path(found["flow_field_vtu"]).parent / "flow_render.png")
     sys.path.insert(0, str(_PROJECT_ROOT / "scripts"))
     from render_aircraft_views import render_composite
 

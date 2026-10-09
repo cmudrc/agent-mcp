@@ -15,4 +15,14 @@ def _isolated_runs_dir(tmp_path_factory, monkeypatch):
     monkeypatch.delenv("AIRCRAFT_LOG", raising=False)
     monkeypatch.delenv("AIRCRAFT_PARTICIPANT", raising=False)
     monkeypatch.delenv("AIRCRAFT_PARENT_SESSION", raising=False)
-    return runs
+    # Code under test sets AIRCRAFT_SESSION_ID itself (RunLog.start, the
+    # gateway); recording it first makes pytest remove it again afterwards.
+    monkeypatch.setenv("AIRCRAFT_SESSION_ID", "unset")
+    monkeypatch.delenv("AIRCRAFT_SESSION_ID")
+    # Agent output folders go to a temporary place, never pipeline_output/.
+    monkeypatch.setenv("AIRCRAFT_OUTPUT_ROOT", str(tmp_path_factory.mktemp("pipeline_output")))
+    from aircraft_mcp import run_files
+
+    run_files.reset_for_tests()
+    yield runs
+    run_files.reset_for_tests()

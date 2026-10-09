@@ -78,8 +78,9 @@ correct canard values in 2 of 2 runs that Kiro's rate limit let through.
 In the direct route, Kiro's own model calling the tools, 3 of 3 runs reached
 the solver after the geometry hand-off was changed to a file path, and none
 reported the right values: each model wrote its own solver setup. The solver
-tools now refuse the setups that caused this (2026-10-08); the direct route
-has not been measured again since. The Kiro IDE itself has not been tried;
+tools now refuse the setups that caused this, and the one-call tools are now
+offered to Kiro too (2026-10-08); the direct route has not been measured
+again since. The Kiro IDE itself has not been tried;
 tell us where its steps go wrong.
 
 Before you use Kiro, know where your text goes. What you type in Kiro, and
@@ -107,8 +108,17 @@ In Kiro's chat, there are two ways to work:
    `su2_generate_mesh_from_step`, and so on). This is harder. Our local
    model completed 0 of 5 such runs (2026-10-02). Kiro's own models (its
    default and Claude Sonnet 4.5) reached the solver in 3 of 3 runs on
-   2026-10-08 but got the right lift and drag in none. For lift and drag,
-   ask Kiro to call `su2_run_aero`, the one-call CFD tool.
+   2026-10-08 but got the right lift and drag in none: each wrote its own
+   solver setup with the raw tools. Since that evening the gateway also
+   offers the local agent's one-call tools (`tigl_export_geometry`,
+   `su2_run_aero`, `pycycle_run_engine`, `nseg_run_cpacs_mission`), and the
+   steering file tells Kiro to use them. Called directly, they return the
+   reference canard values; Kiro itself has not been measured with them yet.
+
+Kiro works on one aircraft file per chat. A request on a second file is
+refused (`working_file_locked`), so results from two aircraft cannot mix;
+start a new chat for the other file. To compare several files, ask for
+`compare_cpacs_files` (it only reads them).
 
 Use full paths for aircraft files in Kiro. While the gateway runs, a
 progress page is at http://127.0.0.1:8765 (current stage, recent calls,

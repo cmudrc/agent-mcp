@@ -387,8 +387,6 @@ def run_hybrid(
     AIRCRAFT_LOG=0; pass ``runlog`` to write into an existing one. The
     --trace-jsonl file is written exactly as before, independently.
     """
-    image_dir = image_dir or Path("hybrid_seeker_renders")
-    image_dir.mkdir(exist_ok=True)
 
     def trace(record: dict[str, Any]) -> None:
         """Append one JSON line per planner turn and tool call, untruncated.
@@ -459,6 +457,16 @@ def run_hybrid(
         },
     )
     rl.user_prompt(prompt, cpacs=cpacs)
+    # One aircraft file per run (2026-10-08): the file this run was started
+    # on is claimed first, so a tool call on any other file is refused.
+    from aircraft_mcp import run_files
+
+    run_files.claim_working_file(cpacs, "hybrid_agent")
+    # Seeker images go to this run's own folder (named by the session id the
+    # log just published); the old fixed folder was overwritten every run.
+    if image_dir is None or run_files.is_default(image_dir):
+        image_dir = run_files.run_folder() / "seeker_renders"
+    image_dir.mkdir(parents=True, exist_ok=True)
     planner_options = {"temperature": 0.0, "num_ctx": 16384}
     end_reason = "max_turns reached"
     turns_used = 0
@@ -717,8 +725,9 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--image-dir",
-        default="hybrid_seeker_renders",
-        help="Where to write the seeker's rendered PNGs",
+        default=None,
+        help="Where to write the seeker's rendered PNGs (default: this run's "
+        "own folder, pipeline_output/<session id>/seeker_renders)",
     )
     p.add_argument(
         "--fault",
@@ -784,7 +793,7 @@ def main() -> int:
             args.cpacs,
             prompt,
             max_turns=args.max_turns,
-            image_dir=Path(args.image_dir),
+            image_dir=Path(args.image_dir) if args.image_dir else None,
             seeker_enabled=not args.no_seeker,
             trace_path=Path(args.trace_jsonl) if args.trace_jsonl else None,
             fault=FaultInjector(args.fault) if args.fault else None,

@@ -36,7 +36,6 @@ def _patch(monkeypatch, captured):
     monkeypatch.setattr(a, "run_adapter", fake_run_adapter)
     monkeypatch.setattr(g, "_read_cpacs", lambda _p: "<cpacs/>")
     monkeypatch.setattr(g, "_save_cpacs", lambda *_a, **_k: None)
-    monkeypatch.setattr(g, "_find_existing_artifact", lambda *_a, **_k: None)
 
 
 def test_omitted_mach_is_named_and_defaulted(monkeypatch):
@@ -114,11 +113,16 @@ def test_surface_size_m_reaches_the_adapter_and_forces_a_fresh_mesh(monkeypatch,
     monkeypatch.setattr(sa, "run_adapter", fake_su2)
     monkeypatch.setattr(g, "_read_cpacs", lambda _p: "<cpacs/>")
     monkeypatch.setattr(g, "_save_cpacs", lambda *_a, **_k: None)
-    monkeypatch.setattr(g, "_find_existing_artifact", lambda suffix, *_a, **_k: "old.step" if suffix == ".step" else "old.su2")
-    _handler()(cpacs_path="x.xml", mach=0.78, aoa=2.0, altitude_ft=35000.0, surface_size_m=0.1765)
+    step = tmp_path / "exported.step"
+    step.write_text("ISO-10303-21;")
+    g._EXPORTED_STEP[str(Path("x.xml").resolve())] = str(step)
+    _handler()(
+        cpacs_path="x.xml", mach=0.78, aoa=2.0, altitude_ft=35000.0, surface_size_m=0.1765,
+        mesh_path="old.su2",
+    )
     assert captured["surface_size_m"] == 0.1765
     assert captured["mesh_path"] is None  # a stale mesh must not be reused for a new rung
-    assert captured["step_path"] == "old.step"
+    assert captured["step_path"] == str(step)
     assert "surface_size_m" in g.TOOLS["su2_run_aero"]["schema"]["function"]["parameters"]["properties"]
 
 
@@ -137,7 +141,6 @@ def test_refinement_plateau_is_judged_by_the_tool(monkeypatch):
     monkeypatch.setattr(sa, "run_adapter", lambda _xml, **kw: ("<cpacs/>", next(runs)))
     monkeypatch.setattr(g, "_read_cpacs", lambda _p: "<cpacs/>")
     monkeypatch.setattr(g, "_save_cpacs", lambda *_a, **_k: None)
-    monkeypatch.setattr(g, "_find_existing_artifact", lambda *_a, **_k: None)
     g._RUNG_HISTORY.clear()
     kw = dict(cpacs_path="ladder.xml", mach=0.78, aoa=2.0, altitude_ft=35000.0)
     r1 = _handler()(surface_density=30, **kw)["refinement"]
@@ -154,7 +157,6 @@ def test_no_refinement_field_without_coefficients(monkeypatch):
     monkeypatch.setattr(sa, "run_adapter", lambda _xml, **kw: ("<cpacs/>", {"solver": "su2_cfd", "error": {"type": "solver_failure"}}))
     monkeypatch.setattr(g, "_read_cpacs", lambda _p: "<cpacs/>")
     monkeypatch.setattr(g, "_save_cpacs", lambda *_a, **_k: None)
-    monkeypatch.setattr(g, "_find_existing_artifact", lambda *_a, **_k: None)
     out = _handler()(cpacs_path="x.xml", mach=0.78, aoa=2.0, altitude_ft=35000.0)
     assert out["refinement"] is None
 
@@ -171,7 +173,6 @@ def test_converged_is_renamed_for_the_planner(monkeypatch):
     )
     monkeypatch.setattr(g, "_read_cpacs", lambda _p: "<cpacs/>")
     monkeypatch.setattr(g, "_save_cpacs", lambda *_a, **_k: None)
-    monkeypatch.setattr(g, "_find_existing_artifact", lambda *_a, **_k: None)
     g._RUNG_HISTORY.clear()
     out = _handler()(cpacs_path="x.xml", mach=0.78, aoa=2.0, altitude_ft=35000.0)
     assert "converged" not in out
@@ -208,3 +209,46 @@ def test_export_flow_field_never_returns_another_aircrafts_file(monkeypatch, tmp
     g._SU2_RUN_DIR[str((tmp_path / "mine.xml").resolve())] = str(mine)
     out = g.TOOLS["export_flow_field"]["handler"](cpacs_path="mine.xml")
     assert out["flow_field_vtu"].endswith("su2_run_mine/vol_solution.vtu")
+
+
+def test_no_geometry_from_old_runs_and_each_run_gets_its_own_folder(monkeypatch, tmp_path):
+    """2026-10-08: no fallback to demo-era folders; every CFD run writes to a
+    numbered folder of its own under the run's folder, never to a shared one."""
+    import su2_mcp.cpacs_adapter as sa
+
+    seen: list[dict] = []
+
+    def fake_su2(_xml, flight_conditions=None, **kw):
+        seen.append(kw)
+        return "<cpacs/>", {"solver": "su2_cfd", "CL": 0.1, "CD": 0.01, "output_dir": kw["output_dir"]}
+
+    monkeypatch.setattr(sa, "run_adapter", fake_su2)
+    monkeypatch.setattr(g, "_read_cpacs", lambda _p: "<cpacs/>")
+    monkeypatch.setattr(g, "_save_cpacs", lambda *_a, **_k: None)
+    assert not hasattr(g, "_find_existing_artifact")
+    out1 = _handler()(cpacs_path="fresh.xml", mach=0.78, aoa=2.0, altitude_ft=35000.0)
+    out2 = _handler()(cpacs_path="fresh.xml", mach=0.78, aoa=2.0, altitude_ft=35000.0, output_dir="pipeline_output/su2_run")
+    assert seen[0]["step_path"] is None and seen[0]["mesh_path"] is None
+    assert out1["geometry_exported_this_session"] is False
+    d1, d2 = Path(seen[0]["output_dir"]), Path(seen[1]["output_dir"])
+    assert d1.name == "cfd_01" and d2.name == "cfd_02" and d1.parent == d2.parent
+    assert str(d1).startswith(str(Path(__import__("os").environ["AIRCRAFT_OUTPUT_ROOT"])))
+
+
+def test_a_second_aircraft_file_is_refused(monkeypatch, tmp_path):
+    """One aircraft file per session: the second file is refused before anything runs."""
+    import su2_mcp.cpacs_adapter as sa
+
+    calls: list[str] = []
+    monkeypatch.setattr(sa, "run_adapter", lambda _xml, **kw: (calls.append("ran") or ("<cpacs/>", {"solver": "su2_cfd", "CL": 0.1, "CD": 0.01})))
+    monkeypatch.setattr(g, "_read_cpacs", lambda _p: "<cpacs/>")
+    monkeypatch.setattr(g, "_save_cpacs", lambda *_a, **_k: None)
+    a, b = tmp_path / "a.xml", tmp_path / "b.xml"
+    _handler()(cpacs_path=str(a), mach=0.78, aoa=2.0, altitude_ft=35000.0)
+    out = _handler()(cpacs_path=str(b), mach=0.78, aoa=2.0, altitude_ft=35000.0)
+    assert out["error"]["type"] == "working_file_locked"
+    assert out["error"]["working_file"] == str(a.resolve())
+    assert out["error"]["requested_file"] == str(b.resolve())
+    assert calls == ["ran"]
+    again = _handler()(cpacs_path=str(a), mach=0.78, aoa=2.0, altitude_ft=35000.0)
+    assert "error" not in again

@@ -204,7 +204,16 @@ write these logs. `--trace-jsonl` still writes its own file, unchanged.
 The `aircraft_mcp` package in this repository (formerly its own
 `aircraft-mcp` folder) mounts the five servers behind one MCP endpoint,
 with namespaced tools (`tigl_*`, `su2_*`, `pycycle_*`, `nseg_*`,
-`aviary_*`; 63 tools with all five installed, 55 without Aviary). Each
+`aviary_*`), plus the local agent's one-call tools (`tigl_export_geometry`,
+`su2_run_aero`, `pycycle_run_engine`, `nseg_run_cpacs_mission`,
+`aviary_run_cpacs_mission`, `run_openaerostruct`, `export_flow_field`,
+`render_flow_image`) and `compare_cpacs_files`: 72 tools with all five
+servers, Aviary and OpenAeroStruct installed, 62 without Aviary and
+OpenAeroStruct. One aircraft file per session: a call on a second CPACS
+file is refused (`working_file_locked`); `compare_cpacs_files` reads several
+and writes nothing. Each run writes its files under
+`pipeline_output/<session id>/` (`geometry_01`, `cfd_01`, ...), and every
+CPACS `header/updates` entry ends with `[session <id>]`. Each
 server runs unchanged as its own subprocess; a server that is not installed
 is reported by `gateway_status`, never faked. The servers get the gateway's
 `PATH`, which must contain `~/.local/su2/bin` and `docker`: started with the

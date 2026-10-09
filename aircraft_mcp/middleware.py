@@ -1,17 +1,28 @@
 """Gateway middleware: per tool call, a start and an end progress event for
 the dashboard, and the full arguments and result in the gateway's session
-log (long strings such as base64 CAD go to the session's blobs/ folder)."""
+log (long strings such as base64 CAD go to the session's blobs/ folder).
+
+Before a call runs, the aircraft file it would work on is checked (2026-10-08):
+a restricted-dataset file name is refused, and so is a second aircraft file in
+the same session (aircraft_mcp.run_files), for the raw tools as well as the
+one-call tools. A refused call is logged like any other and never reaches the
+server."""
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 import uuid
+from pathlib import Path
 from collections.abc import Callable
 from typing import Any
 
 from fastmcp.server.middleware import Middleware, MiddlewareContext
+from fastmcp.tools.tool import ToolResult
+from mcp.types import TextContent
 
+from aircraft_mcp import restricted, run_files
 from aircraft_mcp.progress import ProgressLog
 from aircraft_mcp.runlog import RunLog, to_jsonable
 
@@ -26,6 +37,38 @@ def result_payload(result: Any) -> Any:
     if content is not None:
         return {"content": to_jsonable(content)}
     return to_jsonable(result)
+
+
+#: Tools that read several aircraft files on purpose and write none.
+MULTI_FILE_READERS = frozenset({"compare_cpacs_files"})
+
+
+def target_cpacs(tool: str, args: dict[str, Any]) -> str | None:
+    """The aircraft file a call would work on, or None."""
+    if tool in MULTI_FILE_READERS:
+        return None
+    path = args.get("cpacs_path")
+    if path is None and tool == "tigl_open_cpacs" and args.get("source_type", "path") == "path":
+        path = args.get("source")
+    return path if isinstance(path, str) and path.strip() else None
+
+
+def refusal_for(tool: str, args: dict[str, Any]) -> dict[str, Any] | None:
+    """A structured refusal when the call must not run, else None."""
+    path = target_cpacs(tool, args)
+    if path is None:
+        return None
+    if restricted.path_matches(Path(path)):
+        return {
+            "error": {
+                "type": "restricted_data_refused",
+                "message": (
+                    "Restricted-dataset file names are refused through this "
+                    "gateway. Nothing was run. Use the public example aircraft."
+                ),
+            }
+        }
+    return run_files.claim_working_file(path, tool)
 
 
 def _reports_error(payload: Any) -> bool:
@@ -66,6 +109,14 @@ class StageMiddleware(Middleware):
         rl.tool_call(tool, args, call_id=call_id)
         self.log.start(call_id, tool)
         t0 = time.time()
+        refused = refusal_for(tool, args)
+        if refused is not None:
+            self.log.end(call_id, tool, ok=False, error=refused["error"]["type"])
+            rl.tool_result(tool, refused, call_id=call_id, duration_s=time.time() - t0, ok=False)
+            return ToolResult(
+                content=[TextContent(type="text", text=json.dumps(refused))],
+                structured_content=refused,
+            )
         try:
             result = await call_next(context)
         except Exception as exc:

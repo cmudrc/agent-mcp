@@ -71,5 +71,8 @@ def test_empty_output_dir_means_the_default(monkeypatch, tmp_path):
     monkeypatch.setattr(g, "_save_cpacs", lambda *_a, **_k: None)
     monkeypatch.chdir(tmp_path)
     out = _handler()(cpacs_path="x.xml", output_dir="")
-    assert seen["output_dir"] == "pipeline_output"
-    assert out["step_path"].startswith("pipeline_output/")
+    # Empty means this run's own numbered folder (2026-10-08), not a shared one.
+    assert Path(seen["output_dir"]).name == "geometry_01"
+    assert out["step_path"].startswith(seen["output_dir"])
+    out2 = _handler()(cpacs_path="x.xml", output_dir="pipeline_output")
+    assert Path(seen["output_dir"]).name == "geometry_02"

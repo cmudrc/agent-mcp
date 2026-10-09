@@ -9,6 +9,13 @@ fake tool.
 Every tool call is written in full (arguments and result) to the gateway's
 session log under ~/aircraft-runs (see aircraft_mcp.runlog); AIRCRAFT_LOG=0
 turns that off.
+
+Since 2026-10-08 the gateway also offers the local agent's one-call tools
+(tigl_export_geometry, su2_run_aero, pycycle_run_engine, the CPACS mission
+tools, the flow-file tools) and compare_cpacs_files (aircraft_mcp.one_call);
+it allocates its session id before starting the servers and passes it to
+them, so every CPACS header entry they write names the session; and it works
+on one aircraft file per session (aircraft_mcp.run_files).
 """
 
 from __future__ import annotations
@@ -22,10 +29,11 @@ from typing import Any
 from fastmcp import FastMCP
 from fastmcp.client.transports import StdioTransport
 
+from aircraft_mcp import one_call, run_files
 from aircraft_mcp.local_agent import run_local_agent
 from aircraft_mcp.middleware import StageMiddleware
 from aircraft_mcp.progress import TYPICAL_SECONDS, ProgressLog
-from aircraft_mcp.runlog import RunLog
+from aircraft_mcp.runlog import RunLog, logging_enabled, new_session_id
 
 SERVERS: tuple[tuple[str, str], ...] = (
     ("tigl", "tigl-mcp"),
@@ -76,18 +84,37 @@ def build_gateway(
     The stage middleware is also reachable as ``server.stage_middleware``;
     its ``runlog`` is the gateway's session log.
     """
+    import os
+
     _ensure_solver_path()
     log = ProgressLog(state_dir)
+    # The session id is allocated now, before any server starts, so each
+    # server can name it in the CPACS header entries it writes; the log
+    # folder itself is still created only at the first tool call.
+    session_id = new_session_id() if logging_enabled() else None
+    if session_id:
+        os.environ["AIRCRAFT_SESSION_ID"] = session_id
+    # The servers get only a minimal environment from the MCP client library
+    # (HOME, PATH, ...), so the variables they need are passed explicitly.
+    server_env = {"OPENMDAO_REPORTS": os.environ.get("OPENMDAO_REPORTS", "0")}
+    if session_id:
+        server_env["AIRCRAFT_SESSION_ID"] = session_id
     gw: FastMCP = FastMCP(
         name="aircraft-mcp",
         instructions=(
             "One gateway over the aircraft-analysis servers. Tools are "
             "namespaced: tigl_* (geometry), su2_* (meshing and CFD), "
             "pycycle_* (engine), nseg_*/aviary_* (mission; use exactly one "
-            "mission family per analysis). File-content arguments ending in "
-            "_base64 take base64-encoded bytes, never file paths. No tool "
-            "invents a number: missing dependencies and invalid inputs come "
-            "back as structured errors."
+            "mission family per analysis). For whole steps on a CPACS file "
+            "use the one-call tools: tigl_export_geometry, su2_run_aero, "
+            "pycycle_run_engine, nseg_run_cpacs_mission or "
+            "aviary_run_cpacs_mission; the raw session tools are for custom "
+            "setups. One aircraft file per session: a call on a second file "
+            "is refused; compare_cpacs_files reads several files and writes "
+            "nothing. File-content arguments ending in _base64 take "
+            "base64-encoded bytes, never file paths. No tool invents a "
+            "number: missing dependencies and invalid inputs come back as "
+            "structured errors."
         ),
     )
 
@@ -101,15 +128,20 @@ def build_gateway(
         if exe is None:
             skipped.append(f"{prefix} ({command} not installed)")
             continue
-        proxy = FastMCP.as_proxy(StdioTransport(exe, []))
+        proxy = FastMCP.as_proxy(StdioTransport(exe, [], env=dict(server_env)))
         gw.mount(proxy, prefix=prefix)
         mounted.append(prefix)
 
     if runlog_factory is None:
 
         def runlog_factory() -> RunLog:
-            return RunLog.start("gateway", meta={"mounted": mounted, "skipped": skipped})
+            return RunLog.start(
+                "gateway",
+                session_id=session_id,
+                meta={"mounted": mounted, "skipped": skipped, "one_call_tools": one_call_tools},
+            )
 
+    one_call_tools = one_call.register(gw)
     middleware = StageMiddleware(log, runlog_factory)
     gw.add_middleware(middleware)
     gw.stage_middleware = middleware  # type: ignore[attr-defined]
@@ -122,8 +154,11 @@ def build_gateway(
         return {
             "mounted": list(mounted),
             "skipped": skipped,
+            "one_call_tools": list(one_call_tools),
             "events_jsonl": str(log.events_path),
             "session_log": str(rl.path) if rl.path else None,
+            "working_file": run_files.working_file(),
+            "output_folder": str(run_files.run_folder()),
             "typical_stage_seconds_estimates": TYPICAL_SECONDS,
         }
 
