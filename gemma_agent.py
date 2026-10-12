@@ -658,8 +658,12 @@ def _nseg(
                 "Run NASA Aviary trajectory-coupled mission optimization. "
                 "Use this when you need a fully optimized fuel + mass profile "
                 "(GTOW, wing mass, reserve fuel, zero-fuel weight). Slower "
-                "than NSEG but higher fidelity. Reads CPACS geometry; runs "
-                "Aviary's internal aero models for L/D."
+                "than NSEG but higher fidelity. It flies Aviary's benchmark "
+                "aircraft with the CPACS aspect ratio, sweep and fuselage "
+                "length applied; the CPACS wing area and taper are set but "
+                "have no effect in this configuration, and the aero is "
+                "Aviary's own, not this pipeline's CFD. The result states "
+                "base_model, from_cpacs, set_but_without_effect and from_caller."
             ),
             "parameters": {
                 "type": "object",
