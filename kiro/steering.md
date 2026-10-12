@@ -39,6 +39,15 @@ project's measured failure modes; do not relax them.
   writes the shared CPACS file, so later steps use earlier results. These
   are the same tools the local agent uses; the reference values for the
   test cases come from them.
+- `preset` on `su2_run_aero` sets the mesh and the run time. `laptop`
+  (about 50k cells, under a minute) is the default. `workstation` (about
+  100k to 150k cells, 2 to 4 minutes) is fine when the user asks for a finer
+  or a converged result. `industry` (400k to 730k cells on these files, 10
+  to 15 minutes per run on this laptop) ties up the machine: ask the user
+  before calling it, or before passing a `surface_density` above the
+  workstation preset's, unless the user named that preset. A converged
+  number means laptop then workstation first; report the plateau check
+  from those two and ask before the third run.
 - Use the raw `su2_*` tools (session, mesh, config, solver, history) only
   when the user asks for a custom solver setup. A new raw session starts
   from the laptop preset's settings with the case unset: set MACH_NUMBER,
