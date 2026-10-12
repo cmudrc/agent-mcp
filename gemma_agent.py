@@ -662,8 +662,11 @@ def _nseg(
                 "aircraft with the CPACS aspect ratio, sweep and fuselage "
                 "length applied; the CPACS wing area and taper are set but "
                 "have no effect in this configuration, and the aero is "
-                "Aviary's own, not this pipeline's CFD. The result states "
-                "base_model, from_cpacs, set_but_without_effect and from_caller."
+                "Aviary's own, not this pipeline's CFD. When the file gives "
+                "Aviary nothing it uses (the public D150 does not), the tool "
+                "refuses unless allow_benchmark_aircraft is true. The result "
+                "states base_model, from_cpacs, set_but_without_effect and "
+                "from_caller."
             ),
             "parameters": {
                 "type": "object",
@@ -683,6 +686,16 @@ def _nseg(
                     },
                     "cruise_mach": {"type": "number", "default": 0.78},
                     "cruise_altitude_ft": {"type": "number", "default": 35000.0},
+                    "allow_benchmark_aircraft": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "The tool refuses (benchmark_aircraft_only) when the "
+                            "file gives Aviary nothing it uses, as the public D150 "
+                            "does not; true flies Aviary's benchmark aircraft at the "
+                            "requested mission, labelled as the benchmark's."
+                        ),
+                    },
                 },
                 "required": ["cpacs_path"],
             },
@@ -695,6 +708,7 @@ def _aviary(
     num_passengers: int | None = None,
     cruise_mach: float | None = None,
     cruise_altitude_ft: float | None = None,
+    allow_benchmark_aircraft: bool = False,
 ) -> dict[str, Any]:
     from aviary_cpacs_mcp import cpacs_adapter as a
 
@@ -718,6 +732,8 @@ def _aviary(
         mp["cruise_altitude_ft"] = cruise_altitude_ft
     else:
         defaults_applied.append("cruise_altitude_ft=35000")
+    if allow_benchmark_aircraft:
+        mp["allow_benchmark_aircraft"] = True
     xml = _read_cpacs(cpacs_path)
     new_xml, summary = a.run_adapter(xml, mission_profile=mp)
     _save_cpacs(cpacs_path, new_xml)

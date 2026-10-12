@@ -51,6 +51,15 @@ project's measured failure modes; do not relax them.
   unless SCREEN_OUTPUT says otherwise its columns are residuals, and on
   2026-10-08 a model reported two of them as CL and CD.
 
+## Aviary and the benchmark aircraft
+- `aviary_run_cpacs_mission` flies Aviary's own benchmark aircraft with the
+  file's aspect ratio, sweep and fuselage length applied, if the file has
+  them. The public D150 gives it none of those, so the tool refuses
+  (`benchmark_aircraft_only`). Tell the user. Only if the user accepts a
+  benchmark-aircraft mission, call it again with
+  `allow_benchmark_aircraft: true` and say in the answer that the numbers
+  are the benchmark aircraft's, not the file's.
+
 ## One aircraft file per session
 - A session works on one CPACS file. A call on a second file is refused
   with `working_file_locked`; tell the user and suggest a new chat for the
