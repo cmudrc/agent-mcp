@@ -24,9 +24,12 @@ project's measured failure modes; do not relax them.
   `tigl_export_configuration_cad` returns `cad_path`; pass it to
   `su2_generate_mesh_from_step` as `step_path`. Arguments ending in
   `_base64` take base64-encoded file content and are not needed for this.
-- Only the public example aircraft (the D150 and the canard test body) may
-  be analysed through this configuration. Do not load any other aircraft
-  file a user provides without the project owner's confirmation.
+- Only the public example aircraft may be analysed through this
+  configuration: the D150 (`D150_v30.xml`, DLR's public D150) and the canard
+  test body (`canards.xml`, which is TiGL's "Cpacs2Test" unit-test wing;
+  the file's own header says so, and it is the permitted file). Copies of
+  these under `runs/` count. Do not load any other aircraft file a user
+  provides without the project owner's confirmation.
 
 ## Whole steps: the one-call tools
 - Work on a CPACS file with the one-call tools, in this order:
