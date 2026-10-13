@@ -2,7 +2,7 @@
 
 Serves one page on localhost showing the active stage, recent tool calls
 with durations, honest typical-time estimates from measured runs, and the
-newest pressure render found in the project's output folders. /sessions
+newest pressure render of this session (earlier runs are not shown). /sessions
 serves the session index and each session's report (see aircraft_mcp.viewer),
 rendered fresh from the session logs on every request. Standard library only;
 read-only over the progress files, the output folders and the session logs.
@@ -16,7 +16,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from aircraft_mcp.local_agent import project_root
+from aircraft_mcp import run_files
 from aircraft_mcp.progress import ProgressLog
 from aircraft_mcp.restricted import path_matches
 from aircraft_mcp.runlog import runs_dir
@@ -33,7 +33,7 @@ _PAGE = """<!doctype html>
  .ok{color:#2c5f2d}.err{color:#b85042}.muted{color:#5b6b7c;font-size:.85rem}
  img{max-width:100%;border:1px solid #e5e1d8;border-radius:6px;margin-top:1rem}
 </style></head><body>
-<h1>Aircraft analysis — live progress</h1>
+<h1>Aircraft analysis: live progress</h1>
 <div class="muted"><a href="/sessions/">Session reports</a>: every model call and tool call, per session</div>
 <div class="stage" id="stage">idle</div>
 <div class="muted" id="meta"></div>
@@ -64,13 +64,14 @@ setInterval(tick, 2000); tick();
 
 
 def _latest_render() -> Path | None:
-    root = project_root()
-    if root is None:
-        return None
-    candidates: list[Path] = []
-    for pat in ("pipeline_output/**/*.png", "hybrid_seeker_renders/*.png"):
-        # never serve a render of the restricted dataset
-        candidates.extend(p for p in root.glob(pat) if not path_matches(p.relative_to(root)))
+    """Newest PNG written by this session (its own output folder), or None.
+
+    Earlier sessions' pictures are never shown: a fresh gateway starts blank.
+    """
+    folder = run_files.run_folder()
+    base = run_files.output_base()
+    # never serve a render of the restricted dataset
+    candidates = [p for p in folder.glob("**/*.png") if not path_matches(p.relative_to(base))]
     if not candidates:
         return None
     return max(candidates, key=lambda p: p.stat().st_mtime)
@@ -115,7 +116,11 @@ def serve_dashboard(log: ProgressLog, port: int) -> None:
                     except json.JSONDecodeError:
                         snap = {}
                 snap.setdefault("updated", time.time())
-                snap["events"] = log.tail(40)
+                # this gateway run only: the files are shared by every run on the machine
+                snap["active"] = [a for a in snap.get("active", []) if a.get("t", 0) >= log.started]
+                if snap.get("last_event", {}).get("t", 0) < log.started:
+                    snap["updated"] = log.started
+                snap["events"] = log.this_run(40)
                 self._send(json.dumps(snap).encode(), "application/json")
             elif self.path == "/render/meta":
                 p = _latest_render()

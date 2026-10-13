@@ -67,6 +67,10 @@ class ProgressLog:
         self.current_path = self.root / "current.json"
         self._lock = Lock()
         self._active: dict[str, dict[str, Any]] = {}
+        #: When this gateway process started. The events file is shared by
+        #: every gateway run on the machine; this_run() shows only this one's.
+        self.started = round(time.time(), 3)
+        self.session_id = os.environ.get("AIRCRAFT_SESSION_ID")
 
     def _write(self, record: dict[str, Any]) -> None:
         with self._lock:
@@ -84,6 +88,7 @@ class ProgressLog:
         rec = {
             "t": round(time.time(), 3),
             "event": "start",
+            "session": self.session_id,
             "call_id": call_id,
             "tool": tool,
             "stage": stage_for(tool),
@@ -96,6 +101,7 @@ class ProgressLog:
         rec = {
             "t": round(time.time(), 3),
             "event": "end",
+            "session": self.session_id,
             "call_id": call_id,
             "tool": tool,
             "stage": stage_for(tool),
@@ -105,6 +111,12 @@ class ProgressLog:
         if error:
             rec["error"] = error[:500]
         self._write(rec)
+
+    def this_run(self, n: int = 50) -> list[dict[str, Any]]:
+        """The last n events written by this gateway process (none from earlier runs)."""
+        return [e for e in self.tail(max(n, 50) * 4) if e.get("t", 0) >= self.started][
+            -n:
+        ]
 
     def tail(self, n: int = 50) -> list[dict[str, Any]]:
         if not self.events_path.exists():

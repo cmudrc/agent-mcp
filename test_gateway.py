@@ -321,15 +321,18 @@ def test_mode_b_lists_only_files_this_run_wrote(monkeypatch, tmp_path):
 
 
 def test_dashboard_never_offers_a_restricted_render(monkeypatch, tmp_path):
-    from aircraft_mcp import dashboard
+    from aircraft_mcp import dashboard, run_files
 
-    pub = tmp_path / "pipeline_output" / "su2_run" / "cp.png"
-    hidden = tmp_path / "pipeline_output" / "f25_case" / "cp.png"
+    monkeypatch.setenv("AIRCRAFT_OUTPUT_ROOT", str(tmp_path / "pipeline_output"))
+    monkeypatch.setenv("AIRCRAFT_SESSION_ID", "20261013-000000-cccccc")
+    run_files.reset_for_tests()
+    folder = run_files.run_folder()
+    pub = folder / "cfd_01" / "cp.png"
+    hidden = folder / "f25_case" / "cp.png"
     for p, t in ((pub, 1_000_000_000), (hidden, 2_000_000_000)):
         p.parent.mkdir(parents=True)
         p.write_bytes(b"png")
         os.utime(p, (t, t))
-    monkeypatch.setattr(dashboard, "project_root", lambda: tmp_path)
     assert dashboard._latest_render() == pub
 
 

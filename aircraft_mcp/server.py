@@ -164,8 +164,8 @@ def build_gateway(
 
     @gw.tool
     def get_progress(last_n: int = 30) -> dict[str, Any]:
-        """Recent gateway tool-call events (start/end, stage, duration)."""
-        return {"events": log.tail(int(last_n))}
+        """Recent tool-call events of this gateway session (start/end, stage, duration)."""
+        return {"events": log.this_run(int(last_n))}
 
     @gw.tool
     def run_aircraft_analysis(
