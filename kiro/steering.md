@@ -63,6 +63,34 @@ project's measured failure modes; do not relax them.
   unless SCREEN_OUTPUT says otherwise its columns are residuals, and on
   2026-10-08 a model reported two of them as CL and CD.
 
+## Reference sweeps and precomputed files
+- Some aircraft files carry a reference sweep: real SU2 runs at several
+  angles of attack on a fine mesh from the lab server, stored in the file
+  with the mesh, the date and a fitted drag polar and lift curve. Read
+  them with `aero_sweep_lookup` (give one or more file paths; `at_aoa_deg`,
+  `at_cl` or `at_mass_kg` for a value at an angle, a lift coefficient or a
+  cruise mass). It names the stored runs each value comes from and
+  refuses anything outside the stored angles; say "interpolated between
+  the runs at X and Y degrees" when it says so. It reads several files at
+  once, so two designs can be compared from one chat.
+- On a file that carries a reference sweep, do not run `su2_run_aero`
+  unless the user asks for a live run: the quick laptop mesh is far
+  coarser than the stored runs, and the two must not be mixed. The mission
+  tool uses the stored polar on such a file and says so (`polar_source`).
+- `compare_cpacs_files` reports span, area, the aspect ratio computed as
+  span squared over area (say it is computed), the section chord scales
+  and whether a file carries a reference sweep. Use it for "what differs
+  between these designs".
+- The engine: `pycycle_run_engine` sizes to `design_thrust_n` if given,
+  else to a design thrust the file states, else to the drag of the last
+  SU2 run; its `sizing_basis` says which. To compare two designs with the
+  same engine, use the design thrust the files state, or pass the same
+  `design_thrust_n` to both, and say so.
+- Masses: when a file states a take-off mass, the mission tool uses it and
+  reports `weight_source`; do not invent one. Where a value is stated in
+  the file with a source (for example the D150's 72,500 kg from DLR's
+  reference-model document), quote the source.
+
 ## Aviary and the benchmark aircraft
 - `aviary_run_cpacs_mission` flies Aviary's own benchmark aircraft with the
   file's aspect ratio, sweep and fuselage length applied, if the file has

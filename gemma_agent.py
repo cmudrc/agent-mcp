@@ -536,7 +536,13 @@ def _refinement_status(
             "description": (
                 "Run the pyCycle turbofan engine cycle analysis. Returns "
                 "TSFC, net thrust, OPR, and BPR for the engine described "
-                "in CPACS at the given Mach and altitude."
+                "in CPACS at the given Mach and altitude. The engine is "
+                "sized, in this order, to design_thrust_n if given, else to "
+                "the design thrust the file states "
+                "(analysisResults/engineSizing), else to the drag of the "
+                "last SU2 run in the file; the result's sizing_basis says "
+                "which. To compare two designs with the same engine, pass "
+                "the same design_thrust_n for both."
             ),
             "parameters": {
                 "type": "object",
@@ -544,6 +550,14 @@ def _refinement_status(
                     "cpacs_path": {"type": "string"},
                     "mach": {"type": "number", "default": 0.78},
                     "altitude_ft": {"type": "number", "default": 35000.0},
+                    "design_thrust_n": {
+                        "type": "number",
+                        "description": (
+                            "Cruise design net thrust in newtons to size the "
+                            "engine to. Pass it only when the user states one "
+                            "or the task brief fixes the engine."
+                        ),
+                    },
                 },
                 "required": ["cpacs_path"],
             },
@@ -551,13 +565,17 @@ def _refinement_status(
     },
 )
 def _pycycle(
-    cpacs_path: str, mach: float = 0.78, altitude_ft: float = 35000.0
+    cpacs_path: str,
+    mach: float = 0.78,
+    altitude_ft: float = 35000.0,
+    design_thrust_n: float | None = None,
 ) -> dict[str, Any]:
     from pycycle_mcp import cpacs_adapter as a
 
     xml = _read_cpacs(cpacs_path)
     fc = {"mach": mach, "altitude_ft": altitude_ft}
-    new_xml, summary = a.run_adapter(xml, flight_conditions=fc)
+    design_lbf = float(design_thrust_n) * 0.224809 if design_thrust_n is not None else None
+    new_xml, summary = a.run_adapter(xml, flight_conditions=fc, design_thrust_lbf=design_lbf)
     _save_cpacs(cpacs_path, new_xml)
     return summary
 

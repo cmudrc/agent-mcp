@@ -49,3 +49,6 @@ Issues   = "https://github.com/cmudrc/agent-mcp/issues"
 [tool.setuptools]
 py-modules = ["gemma_agent", "gemma_agent_v2"]
 packages = ["aircraft_mcp"]
+
+[tool.setuptools.package-data]
+aircraft_mcp = ["static/*.mp4"]

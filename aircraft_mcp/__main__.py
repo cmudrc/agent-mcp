@@ -66,12 +66,20 @@ def main() -> int:
         pass
 
     if args.dashboard_port:
-        from aircraft_mcp.dashboard import serve_dashboard
+        from aircraft_mcp.dashboard import free_port, serve_dashboard
 
-        t = threading.Thread(
-            target=serve_dashboard, args=(log, args.dashboard_port), daemon=True
-        )
-        t.start()
+        # A second gateway on the same machine (two Kiro chats side by side,
+        # 2026-10-14) used to lose its page because the port was taken; it
+        # now takes the next free one and says which.
+        port = free_port(int(args.dashboard_port))
+        if port is None:
+            print(f"progress page: ports {args.dashboard_port} to {args.dashboard_port + 10} are busy; no page", file=sys.stderr)
+        else:
+            os.environ["AIRCRAFT_DASHBOARD_URL"] = f"http://127.0.0.1:{port}"
+            if port != int(args.dashboard_port):
+                print(f"progress page: port {args.dashboard_port} is busy, using http://127.0.0.1:{port}", file=sys.stderr)
+            t = threading.Thread(target=serve_dashboard, args=(log, port), daemon=True)
+            t.start()
 
     if args.transport == "stdio":
         gw.run()

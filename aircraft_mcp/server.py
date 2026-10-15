@@ -159,6 +159,7 @@ def build_gateway(
             "session_log": str(rl.path) if rl.path else None,
             "working_file": run_files.working_file(),
             "output_folder": str(run_files.run_folder()),
+            "progress_page": os.environ.get("AIRCRAFT_DASHBOARD_URL"),
             "typical_stage_seconds_estimates": TYPICAL_SECONDS,
         }
 

@@ -40,7 +40,7 @@ def result_payload(result: Any) -> Any:
 
 
 #: Tools that read several aircraft files on purpose and write none.
-MULTI_FILE_READERS = frozenset({"compare_cpacs_files"})
+MULTI_FILE_READERS = frozenset({"compare_cpacs_files", "aero_sweep_lookup"})
 
 
 def target_cpacs(tool: str, args: dict[str, Any]) -> str | None:

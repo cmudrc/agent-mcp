@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import re
+import socket
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -21,7 +22,9 @@ from aircraft_mcp.progress import ProgressLog
 from aircraft_mcp.restricted import path_matches
 from aircraft_mcp.runlog import runs_dir
 
-_SESSION = re.compile(r"^/sessions/([A-Za-z0-9_.-]+)/(report\.html|events\.jsonl|meta\.json|blobs/[0-9a-f]{64}\.txt)$")
+_SESSION = re.compile(
+    r"^/sessions/([A-Za-z0-9_.-]+)/(report\.html|events\.jsonl|meta\.json|blobs/[0-9a-f]{64}\.txt)$"
+)
 
 _PAGE = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Aircraft analysis progress</title>
@@ -40,7 +43,12 @@ _PAGE = """<!doctype html>
 <table id="events"><tr><th>time</th><th>stage</th><th>tool</th><th>status</th><th>duration</th></tr></table>
 <div class="muted">Typical stage times are estimates from measured runs on this project's hardware.</div>
 <img id="render" style="display:none"/>
+<div id="explainer" style="display:none;margin-top:1.4rem">
+ <div class="muted" style="margin-bottom:.4rem">The pipeline in one minute: what each tool does, from a real run on the public D150.</div>
+ <video id="explainer_video" src="/explainer.mp4" muted autoplay loop playsinline controls style="max-width:100%;border:1px solid #e5e1d8;border-radius:6px"></video>
+</div>
 <script>
+fetch('/explainer/meta').then(r => r.json()).then(m => { if (m.available) document.getElementById('explainer').style.display = 'block'; }).catch(() => {});
 async function tick(){
  const r = await fetch('/status.json'); const s = await r.json();
  const act = s.active && s.active.length ? s.active[s.active.length-1] : null;
@@ -63,6 +71,22 @@ setInterval(tick, 2000); tick();
 </script></body></html>"""
 
 
+EXPLAINER = Path(__file__).resolve().parent / "static" / "pipeline_in_one_minute.mp4"
+
+
+def free_port(preferred: int, tries: int = 11) -> int | None:
+    """The preferred port if it can be bound, else the next free one, else None."""
+    for port in range(preferred, preferred + tries):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+            return port
+    return None
+
+
 def _latest_render() -> Path | None:
     """Newest PNG written by this session (its own output folder), or None.
 
@@ -71,7 +95,9 @@ def _latest_render() -> Path | None:
     folder = run_files.run_folder()
     base = run_files.output_base()
     # never serve a render of the restricted dataset
-    candidates = [p for p in folder.glob("**/*.png") if not path_matches(p.relative_to(base))]
+    candidates = [
+        p for p in folder.glob("**/*.png") if not path_matches(p.relative_to(base))
+    ]
     if not candidates:
         return None
     return max(candidates, key=lambda p: p.stat().st_mtime)
@@ -117,7 +143,9 @@ def serve_dashboard(log: ProgressLog, port: int) -> None:
                         snap = {}
                 snap.setdefault("updated", time.time())
                 # this gateway run only: the files are shared by every run on the machine
-                snap["active"] = [a for a in snap.get("active", []) if a.get("t", 0) >= log.started]
+                snap["active"] = [
+                    a for a in snap.get("active", []) if a.get("t", 0) >= log.started
+                ]
                 if snap.get("last_event", {}).get("t", 0) < log.started:
                     snap["updated"] = log.started
                 snap["events"] = log.this_run(40)
@@ -125,7 +153,9 @@ def serve_dashboard(log: ProgressLog, port: int) -> None:
             elif self.path == "/render/meta":
                 p = _latest_render()
                 self._send(
-                    json.dumps({"available": p is not None, "path": str(p) if p else None}).encode(),
+                    json.dumps(
+                        {"available": p is not None, "path": str(p) if p else None}
+                    ).encode(),
                     "application/json",
                 )
             elif self.path.startswith("/render/latest"):
@@ -135,6 +165,17 @@ def serve_dashboard(log: ProgressLog, port: int) -> None:
                     self.end_headers()
                     return
                 self._send(p.read_bytes(), "image/png")
+            elif self.path == "/explainer/meta":
+                self._send(
+                    json.dumps({"available": EXPLAINER.is_file()}).encode(),
+                    "application/json",
+                )
+            elif self.path.startswith("/explainer.mp4"):
+                if not EXPLAINER.is_file():
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                self._send(EXPLAINER.read_bytes(), "video/mp4")
             elif self.path in ("/sessions", "/sessions/", "/sessions/index.html"):
                 if self.path == "/sessions":
                     self.send_response(301)
@@ -167,7 +208,11 @@ def serve_dashboard(log: ProgressLog, port: int) -> None:
                 self.send_response(404)
                 self.end_headers()
                 return
-            ctype = "application/json" if rel.endswith(".json") else "text/plain; charset=utf-8"
+            ctype = (
+                "application/json"
+                if rel.endswith(".json")
+                else "text/plain; charset=utf-8"
+            )
             self._send(target.read_bytes(), ctype)
 
     ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
