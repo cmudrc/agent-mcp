@@ -2,13 +2,31 @@
   "mcpServers": {
     "aircraft": {
       "command": "/absolute/path/to/the/project/checkout/.venv/bin/aircraft-mcp",
-      "args": ["--dashboard-port", "8765"],
+      "args": [
+        "--dashboard-port",
+        "8765"
+      ],
       "env": {
         "AIRCRAFT_MCP_PROJECT_ROOT": "/absolute/path/to/the/project/checkout",
         "PATH": "replace with the output of: echo $PATH (in a terminal where SU2 and docker are found)"
       },
       "disabled": false,
-      "autoApprove": ["gateway_status", "get_progress", "tigl_ping", "su2_get_su2_status"]
+      "autoApprove": [
+        "gateway_status",
+        "get_progress",
+        "tigl_ping",
+        "su2_get_su2_status",
+        "tigl_export_geometry",
+        "su2_run_aero",
+        "pycycle_run_engine",
+        "nseg_run_cpacs_mission",
+        "aviary_run_cpacs_mission",
+        "run_openaerostruct",
+        "export_flow_field",
+        "render_flow_image",
+        "compare_cpacs_files",
+        "aero_sweep_lookup"
+      ]
     }
   }
 }
