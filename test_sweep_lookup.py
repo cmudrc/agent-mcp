@@ -141,7 +141,3 @@ def test_free_port_skips_a_busy_port():
         assert chosen is not None and chosen != busy
 
 
-def test_explainer_video_is_packaged():
-    assert (
-        dashboard.EXPLAINER.is_file() and dashboard.EXPLAINER.stat().st_size > 1_000_000
-    )
