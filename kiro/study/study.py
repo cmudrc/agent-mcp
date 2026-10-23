@@ -44,7 +44,7 @@ AGENT_DIR = HERE.parents[1]  # agent-mcp
 PROJECT_ROOT = AGENT_DIR.parent  # holds agent-mcp, .venv and the other repos
 HOME = Path.home()
 WINDOWS = {"A": 8765, "B": 8766}
-KIRO_SESSIONS = HOME / ".kiro" / "sessions"
+KIRO_SESSIONS = HOME / ".kiro" / "sessions"  # replaced below when Kiro runs on Windows and this script in WSL
 RUNS_DIR = Path(os.environ.get("AIRCRAFT_RUNS_DIR", str(HOME / "aircraft-runs")))
 STATE_BASE = HOME / ".aircraft-mcp"
 try:  # the project's own restricted-data rules; spelled out nowhere else
@@ -53,6 +53,41 @@ except ImportError:  # pragma: no cover
     _restricted = None
 IS_WIN = platform.system() == "Windows"
 IS_MAC = platform.system() == "Darwin"
+
+
+def _in_wsl() -> bool:
+    try:
+        return "microsoft" in Path("/proc/version").read_text().lower()
+    except Exception:
+        return False
+
+
+IS_WSL = _in_wsl()
+
+
+def windows_home() -> Path | None:
+    """Inside WSL: the Windows user's home as a Linux path (/mnt/c/Users/<name>)."""
+    if not IS_WSL:
+        return None
+    try:
+        out = subprocess.run(["cmd.exe", "/c", "echo %USERPROFILE%"], capture_output=True, text=True, timeout=20).stdout.strip()
+        if out:
+            return Path(subprocess.run(["wslpath", "-u", out], capture_output=True, text=True, timeout=20).stdout.strip())
+    except Exception:
+        pass
+    return None
+
+
+def to_windows_path(p: Path) -> str:
+    """Inside WSL: the Windows spelling of a Linux path, for Kiro on Windows."""
+    try:
+        return subprocess.run(["wslpath", "-w", str(p)], capture_output=True, text=True, timeout=20).stdout.strip() or str(p)
+    except Exception:
+        return str(p)
+
+
+def _sh_quote(s: str) -> str:
+    return "'" + s.replace("'", "'\\''") + "'"
 
 
 # ---------------------------------------------------------------- helpers
@@ -109,9 +144,7 @@ def write_workspace(letter: str, ws_root: Path, participant: str) -> Path:
 
     template = json.loads((AGENT_DIR / "kiro" / "mcp.json").read_text(encoding="utf-8"))
     srv = template["mcpServers"]["aircraft"]
-    srv["command"] = str(gateway_exe())
-    srv["args"] = ["--dashboard-port", str(WINDOWS[letter])]
-    srv["env"] = {
+    env = {
         "AIRCRAFT_MCP_PROJECT_ROOT": str(PROJECT_ROOT),
         "PATH": path_env(),
         "OPENMDAO_REPORTS": "0",
@@ -119,12 +152,24 @@ def write_workspace(letter: str, ws_root: Path, participant: str) -> Path:
         # Each window gets its own progress log, so its page shows only its own calls.
         "AIRCRAFT_MCP_STATE_DIR": str(STATE_BASE / f"study_{letter}"),
     }
+    py = str(venv_bin() / ("python.exe" if IS_WIN else "python"))
+    hooks = (AGENT_DIR / "kiro" / "hooks" / "aircraft-session-log.json").read_text(encoding="utf-8")
+    if IS_WSL:
+        # Kiro runs on Windows and starts the gateway inside WSL. Windows does
+        # not pass environment variables into WSL, so they travel in the
+        # command line. Untested on a real Windows laptop as of 2026-10-22.
+        exports = " ".join(f"export {k}={_sh_quote(v)};" for k, v in env.items())
+        srv["command"] = "wsl.exe"
+        srv["args"] = ["-e", "bash", "-lc", f"{exports} exec {_sh_quote(str(gateway_exe()))} --dashboard-port {WINDOWS[letter]}"]
+        srv["env"] = {}
+        hooks = hooks.replace('"python -m aircraft_mcp.kiro_hook', f'"wsl.exe -e {py} -m aircraft_mcp.kiro_hook')
+    else:
+        srv["command"] = str(gateway_exe())
+        srv["args"] = ["--dashboard-port", str(WINDOWS[letter])]
+        srv["env"] = env
+        hooks = hooks.replace('"python -m aircraft_mcp.kiro_hook', f'"\\"{py}\\" -m aircraft_mcp.kiro_hook' if " " in py else f'"{py} -m aircraft_mcp.kiro_hook')
     srv["disabled"] = False
     (ws / ".kiro" / "settings" / "mcp.json").write_text(json.dumps(template, indent=2), encoding="utf-8")
-
-    hooks = (AGENT_DIR / "kiro" / "hooks" / "aircraft-session-log.json").read_text(encoding="utf-8")
-    py = str(venv_bin() / ("python.exe" if IS_WIN else "python"))
-    hooks = hooks.replace('"python -m aircraft_mcp.kiro_hook', f'"\\"{py}\\" -m aircraft_mcp.kiro_hook' if " " in py else f'"{py} -m aircraft_mcp.kiro_hook')
     (ws / ".kiro" / "hooks" / "aircraft-session-log.json").write_text(hooks, encoding="utf-8")
 
     shutil.copyfile(AGENT_DIR / "kiro" / "steering.md", ws / ".kiro" / "steering" / "aircraft.md")
@@ -132,6 +177,9 @@ def write_workspace(letter: str, ws_root: Path, participant: str) -> Path:
     pilot = (pilot.replace("__X__", letter).replace("__Y__", other)
              .replace("__FILE_X__", str(ws / f"aircraft_{letter}.xml"))
              .replace("__FILE_Y__", str(ws_root / f"aircraft_{other}" / f"aircraft_{other}.xml")))
+    if IS_WSL:
+        pilot += ("\n- The tools run inside WSL (Linux) and need the Linux paths above in every tool call. "
+                  f"Kiro shows this folder as `{to_windows_path(ws)}`; do not pass that spelling to a tool.\n")
     (ws / ".kiro" / "steering" / "pilot.md").write_text(pilot, encoding="utf-8")
 
     shutil.copyfile(HERE / "files" / f"aircraft_{letter}.xml", ws / f"aircraft_{letter}.xml")
@@ -142,8 +190,10 @@ def write_workspace(letter: str, ws_root: Path, participant: str) -> Path:
 def processes_running(patterns: list[str]) -> list[str]:
     """Lines of running processes that match any pattern, or [] (best effort)."""
     try:
-        if IS_WIN:
-            out = subprocess.run(["tasklist"], capture_output=True, text=True, timeout=20).stdout
+        if IS_WIN or IS_WSL:
+            out = subprocess.run(["tasklist.exe" if IS_WSL else "tasklist"], capture_output=True, text=True, timeout=20).stdout
+            if IS_WSL:  # the gateways are Linux processes
+                out += subprocess.run(["ps", "-axo", "pid,command"], capture_output=True, text=True, timeout=20).stdout
         else:
             out = subprocess.run(["ps", "-axo", "pid,command"], capture_output=True, text=True, timeout=20).stdout
     except Exception:
@@ -157,7 +207,7 @@ def processes_running(patterns: list[str]) -> list[str]:
 
 
 def kiro_processes() -> list[str]:
-    pats = ["Kiro.exe", "aircraft-mcp"] if IS_WIN else (["Kiro.app/Contents/MacOS", "aircraft-mcp"] if IS_MAC else ["/kiro", "aircraft-mcp"])
+    pats = ["Kiro.exe", "aircraft-mcp"] if (IS_WIN or IS_WSL) else (["Kiro.app/Contents/MacOS", "aircraft-mcp"] if IS_MAC else ["/kiro", "aircraft-mcp"])
     return processes_running(pats)
 
 
@@ -298,11 +348,11 @@ def clear_progress() -> None:
 
 
 def open_kiro(ws: Path) -> bool:
-    kiro = shutil.which("kiro")
+    kiro = shutil.which("kiro.exe") or shutil.which("kiro.cmd") if IS_WSL else shutil.which("kiro")
     if not kiro:
         return False
     try:
-        subprocess.Popen([kiro, "-n", str(ws)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen([kiro, "-n", to_windows_path(ws) if IS_WSL else str(ws)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return True
     except Exception:
         return False
@@ -410,7 +460,7 @@ def cmd_status(args) -> int:
     prev = read_marker(args.records)
     print(f"current participant: {prev['id'] + ' since ' + prev['started'] if prev else 'none'}")
     print(f"records folder: {args.records} ({len([p for p in args.records.glob('*') if p.is_dir()]) if args.records.is_dir() else 0} participants)")
-    print(f"workspaces: {args.workspaces}  gateway: {gateway_exe()}  python: {sys.executable}")
+    print(f"workspaces: {args.workspaces}  gateway: {gateway_exe()}  python: {sys.executable}  mode: {'WSL, Kiro on Windows' if IS_WSL else platform.system()}")
     print(f"Kiro chat store: {'found' if KIRO_SESSIONS.is_dir() else 'not found'} at {KIRO_SESSIONS}")
     print(f"Kiro running: {'yes' if kiro_processes() else 'no'}; Docker: {'ok' if docker_ok() else 'not running'}; SU2: {'ok' if su2_ok() else 'missing'}")
     return 0
@@ -422,9 +472,17 @@ def cmd_transcript(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    global KIRO_SESSIONS
+    base = HOME
+    if IS_WSL:
+        wh = windows_home()
+        if wh is None:
+            sys.exit("running inside WSL but could not find the Windows home folder (cmd.exe /c echo %USERPROFILE%)")
+        base = wh  # Kiro on Windows opens folders and keeps its chats on the Windows side
+        KIRO_SESSIONS = wh / ".kiro" / "sessions"
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--workspaces", type=Path, default=HOME / "kiro-study", help="where the two Kiro workspaces live")
-    ap.add_argument("--records", type=Path, default=HOME / "kiro-study-records", help="where participants' records go")
+    ap.add_argument("--workspaces", type=Path, default=base / "kiro-study", help="where the two Kiro workspaces live")
+    ap.add_argument("--records", type=Path, default=base / "kiro-study-records", help="where participants' records go")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("setup", help="build the two workspaces").set_defaults(fn=cmd_setup)
     p = sub.add_parser("next", help="before a participant: archive the previous one, reset, open Kiro")

@@ -9,7 +9,7 @@ from the study team; this page covers the laptop only.
 
 | Part | Version | Note |
 |---|---|---|
-| Kiro IDE | 1.4.5 | Tested 20 to 22 October 2026 on macOS. Kiro updates itself; an update on 19 October broke the tool connection for a night. Turn automatic updates off (next section) and stay on 1.4.5 for the study. |
+| Kiro IDE | 1.4.5 | Tested 20 to 22 October 2026 on macOS; Windows not yet run (see below). Kiro updates itself; an update on 19 October broke the tool connection for a night. Turn automatic updates off (next section) and stay on 1.4.5 for the study. |
 | Kiro CLI | 2.33.1 | Only needed for the command-line fallback. |
 | This repository | the `main` branch at or after 22 October 2026 | `git pull` once before the study, then do not pull during it. |
 | Docker Desktop | any current | Needed for the geometry export. |
@@ -18,6 +18,34 @@ If Kiro has already updated to a newer version and the tools still connect,
 carry on and tell us the version. If the tools do not connect after an
 update, send us the file `Kiro - MCP Logs.log` from Kiro's log folder
 (Help > Open Logs Folder) and we will fix our side.
+
+## Windows laptops
+
+On Windows the pipeline runs inside WSL2 (Ubuntu inside Windows, see the
+Windows section of `RUN_THE_PIPELINE.md`), while Kiro and Docker Desktop
+run on the Windows side. Run every `study.py` command in the Ubuntu
+terminal. The script notices it is inside WSL and then:
+
+- puts the two workspaces in your Windows home folder
+  (`C:\Users\<you>\kiro-study\aircraft_A` and `aircraft_B`), so Kiro on
+  Windows opens them as ordinary folders;
+- writes Kiro's settings so that Kiro starts the gateway inside WSL
+  (`wsl.exe`), and tells the assistant the Linux spelling of the file paths
+  the tools need;
+- keeps the records in `C:\Users\<you>\kiro-study-records` and reads
+  Kiro's chat store from `C:\Users\<you>\.kiro\sessions`.
+
+Docker Desktop must have WSL integration switched on for the Ubuntu
+distribution (Settings, Resources, WSL integration). The progress pages at
+http://127.0.0.1:8765 and 8766 open in a Windows browser; WSL2 forwards
+them.
+
+This Windows route was written from the documentation and has not yet been
+run on a Windows laptop (22 October 2026). The first time, please do it on
+a call with us, or send the output of `python kiro/study/study.py status`
+and Kiro's MCP log if the server does not connect. The prompt hook may not
+record prompts through `wsl.exe`; the chats are still saved in full from
+Kiro's chat store.
 
 ## One-time setup, about 20 minutes
 
