@@ -9,6 +9,14 @@
 > **Testing the agent?** [TESTER_GUIDE.md](TESTER_GUIDE.md) is a one-hour
 > session guide, and [PROMPT_TEST_SHEET.md](PROMPT_TEST_SHEET.md) lists
 > prompts to try with the behaviour to expect.
+>
+> **Running a study session in the Kiro IDE?**
+> [kiro/study/STUDY_RUNBOOK.md](kiro/study/STUDY_RUNBOOK.md) is the
+> facilitator's checklist, with one command between participants.
+> **Tested Kiro versions: Kiro IDE 1.4.5 and Kiro CLI 2.33.1 (20 to 22
+> October 2026, macOS).** Kiro updates itself and an update broke the tool
+> connection once; set Kiro's update mode to manual and stay on these
+> versions for a study.
 
 The **agent layer** that drives our five aircraft-analysis MCPs
 ([`tigl-mcp`](https://github.com/cmudrc/tigl-mcp),

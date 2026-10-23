@@ -79,9 +79,18 @@ In the direct route, Kiro's own model calling the tools, 3 of 3 runs reached
 the solver after the geometry hand-off was changed to a file path, and none
 reported the right values: each model wrote its own solver setup. The solver
 tools now refuse the setups that caused this, and the one-call tools are now
-offered to Kiro too (2026-10-08); the direct route has not been measured
-again since. The Kiro IDE itself has not been tried;
-tell us where its steps go wrong.
+offered to Kiro too (2026-10-08). Since then Kiro's own model with the
+one-call tools has answered 24 of 24 test prompts and 24 of 26 study
+questions correctly (2026-10-12), and a four-person lab pilot ran in the
+Kiro IDE on 2026-10-20 (see `kiro/study/STUDY_RUNBOOK.md`).
+
+**Versions tested: Kiro IDE 1.4.5 and Kiro CLI 2.33.1 (macOS, 20 to 22
+October 2026).** Kiro updates itself. On 19 October an IDE update started
+rejecting our tool list until we changed one server (fixed the same night).
+Before a test session, set Kiro's update mode to manual (Settings, search
+"update mode") and stay on the tested version; if Kiro has already updated
+and the `aircraft` server shows "Connection Failed", send us Kiro's MCP log
+(Help > Open Logs Folder, `Kiro - MCP Logs.log`).
 
 Before you use Kiro, know where your text goes. What you type in Kiro, and
 every tool result its model reads, is sent to Kiro's cloud models. With a
