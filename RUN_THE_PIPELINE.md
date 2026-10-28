@@ -127,7 +127,15 @@ as Kiro (§8).
 
 ### Windows
 
-The pipeline runs on Windows inside WSL2, which is Ubuntu Linux running
+Two routes. **Without WSL** (added 2026-10-28): the tool packages install
+on Windows directly, TiGL comes from DLR's conda package through Miniforge
+(no administrator rights), live CFD is optional, and no git is needed; the
+steps are in `kiro/study/WINDOWS_SETUP.md`. That is the route for the Kiro
+study, where the stored sweeps answer the aerodynamic questions. The rest
+of this section is the **WSL2 route**, for a laptop that should run the
+whole pipeline including CFD and the local agent.
+
+The pipeline then runs on Windows inside WSL2, which is Ubuntu Linux running
 inside Windows; Docker Desktop and Kiro stay on the Windows side. The Linux
 steps were checked on a blank Ubuntu 24.04 (2026-10-06); the first setup on a
 real Windows laptop is in progress (2026-10-07), so expect rough edges and
@@ -271,6 +279,12 @@ for r in tigl-mcp su2-mcp pycycle-mcp nseg-mcp aviary-cpacs-mcp aircraft-analysi
 done
 ```
 
+Without git: on each repository page on GitHub, the green **Code** button,
+then **Download ZIP**; extract the ZIPs into the parent folder and rename
+each extracted folder to drop its `-main` ending. To update, download the
+ZIP again and replace the folder's contents; the editable installs below
+keep working because the folder keeps its path.
+
 Create one virtual environment at the parent level and install every server
 into it in editable mode (so a `git pull` in a repository takes effect
 without reinstalling):
@@ -346,7 +360,7 @@ Put the `export PATH=...` line in your shell profile (`~/.zshrc` on macOS).
 SU2 tool then returns a `missing_binary` error naming the install page, and
 nothing downstream can run. The agent scripts add `~/.local/su2/bin`
 themselves and so does the pipeline driver; the `aircraft-mcp` gateway does
-not add it for the servers it starts, so an MCP client must pass it (§8). On Windows, SU2 runs inside WSL2
+not add it for the servers it starts, so an MCP client must pass it (§8). SU2 also publishes a Windows build (`SU2-v8.4.0-win64.zip`, not tried by us; see `kiro/study/WINDOWS_SETUP.md`). On the WSL2 route, SU2 runs inside WSL2
 only.
 
 **Parallel SU2.** The downloaded binary is serial, which is why fine meshes

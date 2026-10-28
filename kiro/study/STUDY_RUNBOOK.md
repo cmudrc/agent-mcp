@@ -11,7 +11,7 @@ from the study team; this page covers the laptop only.
 |---|---|---|
 | Kiro IDE | 1.4.5 | Tested 20 to 22 October 2026 on macOS; Windows not yet run (see below). Kiro updates itself; an update on 19 October broke the tool connection for a night. Turn automatic updates off (next section) and stay on 1.4.5 for the study. |
 | Kiro CLI | 2.33.1 | Only needed for the command-line fallback. |
-| This repository | the `main` branch at or after 22 October 2026 | `git pull` once before the study, then do not pull during it. |
+| This repository | the `main` branch at or after 28 October 2026 | `git pull` once before the study, then do not pull during it. Without git: download the ZIP again. `python kiro/study/study.py status` prints the study kit date (`study kit 2026-10-28`); quote it when you report a problem. |
 | Docker Desktop | any current | Needed for the geometry export. |
 
 If Kiro has already updated to a newer version and the tools still connect,
@@ -21,31 +21,31 @@ update, send us the file `Kiro - MCP Logs.log` from Kiro's log folder
 
 ## Windows laptops
 
-On Windows the pipeline runs inside WSL2 (Ubuntu inside Windows, see the
-Windows section of `RUN_THE_PIPELINE.md`), while Kiro and Docker Desktop
-run on the Windows side. Run every `study.py` command in the Ubuntu
-terminal. The script notices it is inside WSL and then:
+Two ways. Neither has been run on a real Windows laptop yet (28 October
+2026), so please do the first run with us on a call.
 
-- puts the two workspaces in your Windows home folder
-  (`C:\Users\<you>\kiro-study\aircraft_A` and `aircraft_B`), so Kiro on
-  Windows opens them as ordinary folders;
-- writes Kiro's settings so that Kiro starts the gateway inside WSL
-  (`wsl.exe`), and tells the assistant the Linux spelling of the file paths
-  the tools need;
-- keeps the records in `C:\Users\<you>\kiro-study-records` and reads
-  Kiro's chat store from `C:\Users\<you>\.kiro\sessions`.
+**Without WSL, Docker or git (recommended for the study).** The tool
+packages install on Windows directly; TiGL, the geometry kernel, comes
+from DLR's conda package through Miniforge, which installs without
+administrator rights. Live CFD is optional. Every step is in
+`WINDOWS_SETUP.md` in this folder. Run the `study.py` commands in the
+prompt that page tells you to use; the workspaces land in
+`C:\Users\<you>\kiro-study` and the records in `C:\Users\<you>\kiro-study-records`.
 
-Docker Desktop must have WSL integration switched on for the Ubuntu
-distribution (Settings, Resources, WSL integration). The progress pages at
-http://127.0.0.1:8765 and 8766 open in a Windows browser; WSL2 forwards
-them.
+**With WSL2.** The pipeline runs inside Ubuntu (see the Windows section of
+`RUN_THE_PIPELINE.md`), while Kiro and Docker Desktop run on the Windows
+side. This needs administrator rights, a reboot, Docker Desktop and an
+Ubuntu version your organisation allows (our guide used 24.04). Run every
+`study.py` command in the Ubuntu terminal. The script notices it is inside
+WSL and then puts the two workspaces in your Windows home folder, writes
+Kiro's settings so that Kiro starts the gateway inside WSL (`wsl.exe`),
+tells the assistant the Linux spelling of the file paths, and reads Kiro's
+chat store from `C:\Users\<you>\.kiro\sessions`. Docker Desktop must have
+WSL integration switched on for the Ubuntu distribution.
 
-This Windows route was written from the documentation and has not yet been
-run on a Windows laptop (22 October 2026). The first time, please do it on
-a call with us, or send the output of `python kiro/study/study.py status`
-and Kiro's MCP log if the server does not connect. The prompt hook may not
-record prompts through `wsl.exe`; the chats are still saved in full from
-Kiro's chat store.
+In both modes the progress pages at http://127.0.0.1:8765 and 8766 open in
+a Windows browser, and the prompt hook may not record prompts; the chats
+are still saved in full from Kiro's chat store.
 
 ## One-time setup, about 20 minutes
 
@@ -95,9 +95,11 @@ is a suggestion, not an error.
    ```
 
    It archives the previous participant, resets both aircraft files and
-   settings, checks Docker, SU2 and the ports, and opens the two Kiro
-   windows. Every line should say `ok`. If a line says `FIX`, fix it and
-   run the same command again.
+   settings, checks the geometry kernel (TiGL in this Python, or Docker),
+   SU2 and the ports, and opens the two Kiro windows. Lines marked `ok`
+   and `note` are fine; a `note` says what is missing and which tool will
+   refuse because of it. If a line says `FIX`, fix it and run the same
+   command again.
 3. Put the Aircraft A window on the left and Aircraft B on the right.
 4. In each window: close the old chat if one is showing and start a new
    session (the + in the chat panel). Check Default, Auto, Autopilot off.
@@ -170,9 +172,11 @@ leave Boeing before sending.
 | Problem | What to do |
 |---|---|
 | No MCP server listed, hooks show "disabled" | The folder is in Restricted Mode. Click Manage in the banner, trust it, then Cmd+Shift+P (Ctrl+Shift+P) and "Reload Window". |
-| `aircraft` shows "Connection Failed" | Check Docker is running. Click Retry. If it still fails, Kiro may have updated; send us `Kiro - MCP Logs.log` from Help > Open Logs Folder. |
+| `aircraft` shows "Connection Failed" | Click Retry. If it still fails, Kiro may have updated; send us `Kiro - MCP Logs.log` from Help > Open Logs Folder. |
+| `next` or `status` says the geometry kernel is `none` | The geometry check and the aircraft length are unavailable; everything else works. Start Docker Desktop (Mac), or install TiGL into the project's Python (Windows, `WINDOWS_SETUP.md` step 3), then run `next` again. |
+| `next` says SU2 was not found | Live CFD requests are refused with an error that says so; the stored sweeps answer the aero questions. Install SU2 only if you want live runs (`RUN_THE_PIPELINE.md` §4, or `WINDOWS_SETUP.md` step 4). |
 | `next` says Kiro is still running | Quit Kiro completely and run it again. |
 | `next` says a port is in use | An old gateway is still running. Quit Kiro, wait ten seconds, run it again. |
 | The two progress pages look the same | They should not; each window has its own log. Run `next` again with the same ID. |
 | The IDE cannot reach the tools at all | Fall back to the command line: two terminals, `cd ~/kiro-study/aircraft_A` and `cd ~/kiro-study/aircraft_B`, then `kiro-cli chat --trust-tools=@aircraft` in each. The chats are then logged by the gateway but not by Kiro's chat store; save the terminal text. |
-| `python kiro/study/study.py` says aircraft-mcp was not found | Run it with the project's `.venv` Python, the one `pip install -e agent-mcp` was done with. |
+| `python kiro/study/study.py` says aircraft-mcp was not found | Run it with the project's Python, the one `pip install -e agent-mcp` was done with (the `.venv`, or the `aircraft` conda environment on Windows). |

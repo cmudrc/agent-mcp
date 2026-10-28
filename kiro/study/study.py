@@ -21,7 +21,10 @@ they ended up. Nothing is deleted; the script only copies and resets.
 Checked on macOS with Kiro IDE 1.4.5 (chat store at ~/.kiro/sessions). On
 Windows and Linux the same paths are tried under the user's home folder;
 if the chat store is not found the script says so and the fallback is to
-copy the chat text by hand (see STUDY_RUNBOOK.md).
+copy the chat text by hand (see STUDY_RUNBOOK.md). On Windows the script
+runs either natively (the project's Python installed on Windows, Kiro on
+Windows) or inside WSL with Kiro on the Windows side; it notices which.
+Neither Windows mode has been run on a real Windows laptop yet (2026-10-28).
 """
 
 from __future__ import annotations
@@ -44,6 +47,9 @@ AGENT_DIR = HERE.parents[1]  # agent-mcp
 PROJECT_ROOT = AGENT_DIR.parent  # holds agent-mcp, .venv and the other repos
 HOME = Path.home()
 WINDOWS = {"A": 8765, "B": 8766}
+#: Printed by every command. Facilitators who install from a ZIP (no git)
+#: have no commit to quote, so they quote this date instead.
+STUDY_KIT_VERSION = "2026-10-28"
 KIRO_SESSIONS = HOME / ".kiro" / "sessions"  # replaced below when Kiro runs on Windows and this script in WSL
 RUNS_DIR = Path(os.environ.get("AIRCRAFT_RUNS_DIR", str(HOME / "aircraft-runs")))
 STATE_BASE = HOME / ".aircraft-mcp"
@@ -115,7 +121,15 @@ def gateway_exe() -> Path:
 
 
 def path_env() -> str:
-    parts = [str(venv_bin()), str(HOME / ".local" / "su2" / "bin")]
+    """PATH for the gateway and the servers it starts: this environment's
+    programs first (conda on Windows also keeps python.exe at the root and
+    the compiled TiGL and OpenCASCADE libraries under Library/bin), then
+    SU2's folder, then the current PATH."""
+    parts = [str(venv_bin()), str(Path(sys.executable).parent)]
+    if IS_WIN and (Path(sys.prefix) / "Library" / "bin").is_dir():
+        parts.append(str(Path(sys.prefix) / "Library" / "bin"))
+    parts.append(str(HOME / ".local" / "su2" / "bin"))
+    parts = list(dict.fromkeys(parts))
     for p in os.environ.get("PATH", "").split(os.pathsep):
         if p and p not in parts:
             parts.append(p)
@@ -152,8 +166,12 @@ def write_workspace(letter: str, ws_root: Path, participant: str) -> Path:
         # Each window gets its own progress log, so its page shows only its own calls.
         "AIRCRAFT_MCP_STATE_DIR": str(STATE_BASE / f"study_{letter}"),
     }
-    py = str(venv_bin() / ("python.exe" if IS_WIN else "python"))
-    hooks = (AGENT_DIR / "kiro" / "hooks" / "aircraft-session-log.json").read_text(encoding="utf-8")
+    # sys.executable as given, not resolved: .venv/bin/python is a symlink
+    # to the base interpreter on a Mac, and the resolved path would be the
+    # wrong environment. On Windows it is .venv\Scripts\python.exe, or the
+    # root python.exe of a conda environment.
+    py = sys.executable
+    hooks_doc = json.loads((AGENT_DIR / "kiro" / "hooks" / "aircraft-session-log.json").read_text(encoding="utf-8"))
     if IS_WSL:
         # Kiro runs on Windows and starts the gateway inside WSL. Windows does
         # not pass environment variables into WSL, so they travel in the
@@ -162,15 +180,22 @@ def write_workspace(letter: str, ws_root: Path, participant: str) -> Path:
         srv["command"] = "wsl.exe"
         srv["args"] = ["-e", "bash", "-lc", f"{exports} exec {_sh_quote(str(gateway_exe()))} --dashboard-port {WINDOWS[letter]}"]
         srv["env"] = {}
-        hooks = hooks.replace('"python -m aircraft_mcp.kiro_hook', f'"wsl.exe -e {py} -m aircraft_mcp.kiro_hook')
+        hook_py = f"wsl.exe -e {py}"
     else:
         srv["command"] = str(gateway_exe())
         srv["args"] = ["--dashboard-port", str(WINDOWS[letter])]
         srv["env"] = env
-        hooks = hooks.replace('"python -m aircraft_mcp.kiro_hook', f'"\\"{py}\\" -m aircraft_mcp.kiro_hook' if " " in py else f'"{py} -m aircraft_mcp.kiro_hook')
+        hook_py = f'"{py}"' if " " in py else py
+    # The hook commands are edited as data and written back with json.dumps,
+    # so a Windows path (backslashes) comes out as valid JSON. Editing the
+    # text directly produced an unreadable hooks file on Windows.
+    for hook in hooks_doc["hooks"]:
+        cmd = hook["action"]["command"]
+        if cmd.startswith("python "):
+            hook["action"]["command"] = hook_py + cmd[len("python"):]
     srv["disabled"] = False
     (ws / ".kiro" / "settings" / "mcp.json").write_text(json.dumps(template, indent=2), encoding="utf-8")
-    (ws / ".kiro" / "hooks" / "aircraft-session-log.json").write_text(hooks, encoding="utf-8")
+    (ws / ".kiro" / "hooks" / "aircraft-session-log.json").write_text(json.dumps(hooks_doc, indent=2), encoding="utf-8")
 
     shutil.copyfile(AGENT_DIR / "kiro" / "steering.md", ws / ".kiro" / "steering" / "aircraft.md")
     pilot = (HERE / "pilot_steering.md").read_text(encoding="utf-8")
@@ -222,6 +247,37 @@ def docker_ok() -> bool:
         return subprocess.run(["docker", "info"], capture_output=True, timeout=30).returncode == 0
     except Exception:
         return False
+
+
+def docker_installed() -> bool:
+    return shutil.which("docker", path=path_env()) is not None
+
+
+_NATIVE_TIGL: bool | None = None
+
+
+def native_tigl_ok() -> bool:
+    """True when TiGL's Python bindings import in the project's Python (the
+    conda install on Windows). The geometry server then needs no Docker."""
+    global _NATIVE_TIGL
+    if _NATIVE_TIGL is None:
+        try:
+            _NATIVE_TIGL = subprocess.run(
+                [sys.executable, "-c", "import tigl3.tigl3wrapper, tixi3.tixi3wrapper"],
+                capture_output=True, timeout=120,
+            ).returncode == 0
+        except Exception:
+            _NATIVE_TIGL = False
+    return _NATIVE_TIGL
+
+
+def geometry_kernel() -> str:
+    """'native', 'docker' or '' (none reachable)."""
+    if native_tigl_ok():
+        return "native"
+    if docker_ok():
+        return "docker"
+    return ""
 
 
 def su2_ok() -> bool:
@@ -348,7 +404,13 @@ def clear_progress() -> None:
 
 
 def open_kiro(ws: Path) -> bool:
-    kiro = shutil.which("kiro.exe") or shutil.which("kiro.cmd") if IS_WSL else shutil.which("kiro")
+    if IS_WSL:
+        kiro = shutil.which("kiro.exe") or shutil.which("kiro.cmd")
+    else:
+        kiro = shutil.which("kiro")
+        if not kiro and IS_WIN:  # Kiro's command-line launcher, if its bin folder is not on PATH
+            guess = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Kiro" / "bin" / "kiro.cmd"
+            kiro = str(guess) if guess.is_file() else None
     if not kiro:
         return False
     try:
@@ -369,6 +431,7 @@ def read_marker(records: Path) -> dict | None:
 
 
 def cmd_setup(args) -> int:
+    print(f"Study kit {STUDY_KIT_VERSION}; mode: {mode_name()}")
     for L in WINDOWS:
         ws = write_workspace(L, args.workspaces, "SETUP")
         say(True, f"workspace for Aircraft {L}: {ws} (progress page port {WINDOWS[L]})")
@@ -383,7 +446,7 @@ def cmd_next(args) -> int:
         sys.exit("participant ID: letters, digits, - and _ only, for example P01 or T01")
     records = args.records
     records.mkdir(parents=True, exist_ok=True)
-    print(f"Study: next participant {pid}, {time.strftime('%H:%M')}")
+    print(f"Study: next participant {pid}, {time.strftime('%H:%M')} (study kit {STUDY_KIT_VERSION}, {mode_name()})")
     bad = False
     procs = kiro_processes()
     if procs:
@@ -402,16 +465,22 @@ def cmd_next(args) -> int:
     say(True, "fresh aircraft_A.xml and aircraft_B.xml, settings rewritten")
     clear_progress()
     say(True, "progress pages cleared")
-    if docker_ok():
-        say(True, "Docker is running")
-    else:
-        say(False, "Docker is not running: start Docker Desktop and wait a minute (the geometry export needs it)")
+    kernel = geometry_kernel()
+    if kernel == "native":
+        say(True, "geometry kernel: TiGL is installed in this Python (no Docker needed)")
+    elif kernel == "docker":
+        say(True, "geometry kernel: Docker is running")
+    elif docker_installed():
+        say(False, "Docker is installed but not running: start Docker Desktop and wait a minute (the geometry check and export need it)")
         bad = True
+    else:
+        say(None, "no geometry kernel (neither TiGL in this Python nor Docker): the geometry check, the CAD export and the "
+                  "aircraft length are unavailable and the tools say so; comparison, sweep lookup, engine and mission still work")
     if su2_ok():
         say(True, "SU2 found")
     else:
-        say(False, "SU2_CFD not found on the PATH the gateway will use")
-        bad = True
+        say(None, "SU2 not found on the PATH the gateway will use: a live CFD request is refused with an error that says so; "
+                  "the stored sweeps answer the aero questions")
     for L, port in WINDOWS.items():
         if port_in_use(port):
             say(False, f"port {port} is in use (an old gateway?). Quit Kiro, wait ten seconds, run this again.")
@@ -456,13 +525,21 @@ def cmd_end(args) -> int:
     return 0
 
 
+def mode_name() -> str:
+    return "WSL, Kiro on Windows" if IS_WSL else platform.system()
+
+
 def cmd_status(args) -> int:
     prev = read_marker(args.records)
+    print(f"study kit {STUDY_KIT_VERSION}")
     print(f"current participant: {prev['id'] + ' since ' + prev['started'] if prev else 'none'}")
     print(f"records folder: {args.records} ({len([p for p in args.records.glob('*') if p.is_dir()]) if args.records.is_dir() else 0} participants)")
-    print(f"workspaces: {args.workspaces}  gateway: {gateway_exe()}  python: {sys.executable}  mode: {'WSL, Kiro on Windows' if IS_WSL else platform.system()}")
+    print(f"workspaces: {args.workspaces}  gateway: {gateway_exe()}  python: {sys.executable}  mode: {mode_name()}")
     print(f"Kiro chat store: {'found' if KIRO_SESSIONS.is_dir() else 'not found'} at {KIRO_SESSIONS}")
-    print(f"Kiro running: {'yes' if kiro_processes() else 'no'}; Docker: {'ok' if docker_ok() else 'not running'}; SU2: {'ok' if su2_ok() else 'missing'}")
+    kernel = geometry_kernel() or "none"
+    print(f"Kiro running: {'yes' if kiro_processes() else 'no'}; geometry kernel: {kernel}; "
+          f"Docker: {'running' if docker_ok() else ('installed, not running' if docker_installed() else 'not installed')}; "
+          f"SU2: {'ok' if su2_ok() else 'missing (live CFD refused; stored sweeps still answer)'}")
     return 0
 
 

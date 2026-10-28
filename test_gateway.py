@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import subprocess
+import sys
 import urllib.request
 from pathlib import Path
 
@@ -497,3 +498,21 @@ def test_gateway_allocates_its_session_id_and_passes_it_on(tmp_path):
             assert Path(status["output_folder"]).name == sid
 
     asyncio.run(check())
+
+
+def test_resolve_finds_a_server_beside_the_interpreter_without_path(monkeypatch, tmp_path):
+    """Kiro starts the gateway with a minimal environment; the servers must
+    still be found in the gateway's own environment. On Windows the scripts
+    carry .exe, which shutil.which handles and a plain path check did not."""
+    from aircraft_mcp import server
+
+    env = tmp_path / "env"
+    (env / "bin").mkdir(parents=True)
+    fake = env / "bin" / "tigl-mcp"
+    fake.write_text("#!/bin/sh\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(sys, "executable", str(env / "bin" / "python"))
+    monkeypatch.setattr(sys, "prefix", str(env))
+    monkeypatch.setenv("PATH", str(tmp_path / "nowhere"))
+    assert server._resolve("tigl-mcp") == str(fake)
+    assert server._resolve("no-such-server") is None

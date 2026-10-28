@@ -45,13 +45,21 @@ SERVERS: tuple[tuple[str, str], ...] = (
 
 
 def _resolve(command: str) -> str | None:
-    found = shutil.which(command)
-    if found:
-        return found
-    beside = Path(sys.executable).parent / command
-    if beside.is_file():
-        return str(beside)
-    return None
+    """The console script of a server package, by name.
+
+    Looked for beside this interpreter first (a venv keeps python and the
+    scripts in one folder; a conda environment on Windows keeps python.exe at
+    the root and the scripts under Scripts/), then on PATH. shutil.which does
+    the lookup so that on Windows the .exe suffix is found: a plain path
+    check for ``Scripts/tigl-mcp`` misses ``tigl-mcp.exe`` and the gateway
+    would start with no servers.
+    """
+    import os
+
+    here = Path(sys.executable).parent
+    scripts = Path(sys.prefix) / ("Scripts" if os.name == "nt" else "bin")
+    beside = os.pathsep.join(str(p) for p in dict.fromkeys((here, scripts)))
+    return shutil.which(command, path=beside) or shutil.which(command)
 
 
 def _ensure_solver_path() -> str | None:

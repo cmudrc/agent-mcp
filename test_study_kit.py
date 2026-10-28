@@ -32,9 +32,41 @@ def test_write_workspace_puts_each_window_on_its_own_port_log_and_file(study, tm
         assert (ws / f"aircraft_{letter}.xml").stat().st_size > 100_000
         pilot = (ws / ".kiro" / "steering" / "pilot.md").read_text()
         assert f"Aircraft {letter}" in pilot and "__X__" not in pilot
-        hooks = (ws / ".kiro" / "hooks" / "aircraft-session-log.json").read_text()
-        assert sys.executable.split("/")[-1] in hooks or "python" in hooks
+        hooks = json.loads((ws / ".kiro" / "hooks" / "aircraft-session-log.json").read_text())
+        for hook in hooks["hooks"]:
+            cmd = hook["action"]["command"]
+            assert cmd.startswith(sys.executable) or cmd.startswith(f'"{sys.executable}"'), cmd
+            assert " -m aircraft_mcp.kiro_hook " in cmd
     assert (tmp_path / "aircraft_A" / ".kiro" / "steering" / "aircraft.md").is_file()
+
+
+def test_hooks_file_stays_valid_json_with_a_windows_interpreter_path(study, tmp_path, monkeypatch):
+    """Before 2026-10-28 the hook commands were edited as text, so a Windows
+    path such as C:\\Users\\... produced invalid JSON escapes and Kiro could
+    not read the hooks file. Paths with a space are quoted for cmd.exe."""
+    monkeypatch.setattr(study, "gateway_exe", lambda: Path(r"C:\Users\a b\aircraft\.venv\Scripts\aircraft-mcp.exe"))
+    monkeypatch.setattr(study, "IS_WIN", True)
+    monkeypatch.setattr(study, "IS_WSL", False)
+    monkeypatch.setattr(sys, "executable", r"C:\Users\a b\aircraft\.venv\Scripts\python.exe")
+    ws = study.write_workspace("B", tmp_path, "T09")
+    hooks = json.loads((ws / ".kiro" / "hooks" / "aircraft-session-log.json").read_text())
+    prompt = [h for h in hooks["hooks"] if h["trigger"] == "UserPromptSubmit"][0]
+    assert prompt["action"]["command"] == r'"C:\Users\a b\aircraft\.venv\Scripts\python.exe" -m aircraft_mcp.kiro_hook prompt_submit'
+    cfg = json.loads((ws / ".kiro" / "settings" / "mcp.json").read_text())["mcpServers"]["aircraft"]
+    assert cfg["command"].endswith("aircraft-mcp.exe") and cfg["args"] == ["--dashboard-port", "8766"]
+
+
+def test_status_names_the_kit_version_and_the_geometry_kernel(study, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(study, "gateway_exe", lambda: Path("/fake/.venv/bin/aircraft-mcp"))
+    monkeypatch.setattr(study, "kiro_processes", lambda: [])
+    monkeypatch.setattr(study, "native_tigl_ok", lambda: True)
+    monkeypatch.setattr(study, "docker_ok", lambda: False)
+    monkeypatch.setattr(study, "docker_installed", lambda: False)
+    monkeypatch.setattr(study, "su2_ok", lambda: False)
+    study.main(["--workspaces", str(tmp_path / "ws"), "--records", str(tmp_path / "rec"), "status"])
+    out = capsys.readouterr().out
+    assert f"study kit {study.STUDY_KIT_VERSION}" in out
+    assert "geometry kernel: native" in out and "stored sweeps still answer" in out
 
 
 def test_study_files_are_the_two_designs(study):
