@@ -24,6 +24,9 @@
 # Flags:
 #   --no-launch        Set up everything, but do not start the agent.
 #   --no-models        Skip step 5b (install Ollama but don't pull Gemma).
+#   --no-ollama        Skip step 5 entirely (no Ollama, no model). For an
+#                      install driven only by an MCP client such as Kiro,
+#                      which is how the Boeing study laptop is set up.
 #   --model NAME       Override the default Gemma model
 #                      (default: gemma4:e4b).
 #   --server-tier      Also pull gemma3:27b for the lab-server tier.
@@ -45,6 +48,7 @@ LAUNCH=1
 PULL_MODELS=1
 SERVER_TIER=0
 SKIP_CLONE=0
+INSTALL_OLLAMA=1
 MODEL="gemma4:e4b"
 WORKDIR="$(pwd)"
 
@@ -52,6 +56,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --no-launch) LAUNCH=0; shift ;;
         --no-models) PULL_MODELS=0; shift ;;
+        --no-ollama) INSTALL_OLLAMA=0; PULL_MODELS=0; shift ;;
         --server-tier) SERVER_TIER=1; shift ;;
         --skip-clone) SKIP_CLONE=1; shift ;;
         --model) MODEL="$2"; shift 2 ;;
@@ -238,6 +243,9 @@ fi
 ok "  $(SU2_CFD -h 2>&1 | head -1)"
 
 # ---------- 5. Ollama + Gemma ----------------------------------------------
+if [ "$INSTALL_OLLAMA" -eq 0 ]; then
+    info "Step 5/7: skipped (--no-ollama): no local model runtime; the tools are driven by an MCP client."
+else
 info "Step 5/7: installing Ollama + pulling Gemma model..."
 if ! command -v ollama >/dev/null 2>&1; then
     case "$OS" in
@@ -271,6 +279,7 @@ if command -v ollama >/dev/null 2>&1; then
         fi
         ollama list
     fi
+fi
 fi
 
 # ---------- 6. sanity check -----------------------------------------------

@@ -61,6 +61,10 @@ curl -fsSL https://raw.githubusercontent.com/cmudrc/agent-mcp/main/bootstrap.sh 
 bash bootstrap.sh --no-launch
 ```
 
+Add `--no-ollama` when the pipeline will be driven only from Kiro or another
+MCP client (the Boeing study laptop): it skips Ollama, the local model's
+runtime, and the model download.
+
 It clones the repositories side by side, builds `.venv` with every server and
 the solver libraries at the pinned versions, installs SU2 into
 `~/.local/su2/bin`, starts Ollama if it is not running and pulls `gemma4:e4b`,

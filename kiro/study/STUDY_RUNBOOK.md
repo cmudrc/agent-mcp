@@ -21,27 +21,27 @@ update, send us the file `Kiro - MCP Logs.log` from Kiro's log folder
 
 ## Windows laptops
 
-Two ways. Neither has been run on a real Windows laptop yet (28 October
-2026), so please do the first run with us on a call.
+Two ways, both step by step in `WINDOWS_SETUP.md` in this folder. Neither
+has been run with Kiro on a real Windows laptop yet (28 October 2026), so
+please do the first run with us on a call.
 
-**Without WSL, Docker or git (recommended for the study).** The tool
-packages install on Windows directly; TiGL, the geometry kernel, comes
-from DLR's conda package through Miniforge, which installs without
-administrator rights. Live CFD is optional. Every step is in
-`WINDOWS_SETUP.md` in this folder. Run the `study.py` commands in the
-prompt that page tells you to use; the workspaces land in
-`C:\Users\<you>\kiro-study` and the records in `C:\Users\<you>\kiro-study-records`.
+**With WSL2 (route A), if Ubuntu inside Windows is installed and
+allowed.** The pipeline's installer runs inside Ubuntu; it was verified on
+Ubuntu 24.04 through the CFD step, so SU2 comes with it. Kiro runs on the
+Windows side. Run every `study.py` command in the Ubuntu window: the
+script notices it is inside WSL, puts the two workspaces in your Windows
+home folder (`C:\Users\<you>\kiro-study`), writes Kiro's settings so that
+Kiro starts the gateway inside Ubuntu through `wsl.exe`, tells the
+assistant the Linux spelling of the file paths, and reads Kiro's chat
+store from `C:\Users\<you>\.kiro\sessions`. Docker is not needed; the
+geometry kernel (TiGL) is a later step on that page.
 
-**With WSL2.** The pipeline runs inside Ubuntu (see the Windows section of
-`RUN_THE_PIPELINE.md`), while Kiro and Docker Desktop run on the Windows
-side. This needs administrator rights, a reboot, Docker Desktop and an
-Ubuntu version your organisation allows (our guide used 24.04). Run every
-`study.py` command in the Ubuntu terminal. The script notices it is inside
-WSL and then puts the two workspaces in your Windows home folder, writes
-Kiro's settings so that Kiro starts the gateway inside WSL (`wsl.exe`),
-tells the assistant the Linux spelling of the file paths, and reads Kiro's
-chat store from `C:\Users\<you>\.kiro\sessions`. Docker Desktop must have
-WSL integration switched on for the Ubuntu distribution.
+**Without WSL (route B).** The tool packages install on Windows directly;
+TiGL comes from DLR's conda package through Miniforge, which installs
+without administrator rights; live CFD is optional. Run the `study.py`
+commands in the prompt that page names; the workspaces land in
+`C:\Users\<you>\kiro-study` and the records in
+`C:\Users\<you>\kiro-study-records`.
 
 In both modes the progress pages at http://127.0.0.1:8765 and 8766 open in
 a Windows browser, and the prompt hook may not record prompts; the chats
