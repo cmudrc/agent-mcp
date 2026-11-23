@@ -85,28 +85,29 @@ minute; `--quick` leaves out the CFD run. Next to each number it prints the
 number we got, and says whether yours is the same. The last two lines check
 the web address and the status page from inside the container.
 
-This is what we get (user id 1234567 is our stand-in for the arbitrary user
-id OpenShift assigns):
+This is what we get on a real x86-64 machine (the build job's run of 23
+November, on an AMD EPYC; user id 1234567 is our stand-in for the arbitrary
+user id OpenShift assigns):
 
 ```text
-reference numbers: our run of 23 November 2026: this image on an Apple laptop, x86-64 emulated by Rosetta
-python 3.12.16 at /opt/aircraft/env/bin/python; user id 1234567; working folder /data/selftest/20261123-171338
+reference numbers: our runs of 23 November 2026: an Apple laptop (x86-64 emulated by Rosetta) and an Intel Xeon build machine (real x86-64) gave the same numbers
+python 3.12.16 at /opt/aircraft/env/bin/python; user id 1234567; working folder /data/selftest/20261123-210022
 
-[ok  ] gateway starts                  3.4 s  tools 67 (same as ours)
+[ok  ] gateway starts                  3.1 s  tools 67 (same as ours)
 [ok  ] SU2 found                       0.0 s  installed True (same as ours)
 [ok  ] the two study files             0.0 s  file_A 52ac93b3e4a5 (same as ours); stored_runs_A 13 (same as ours); file_B 27cbb3d193aa (same as ours); stored_runs_B 13 (same as ours)
-[ok  ] stored-run lookup               0.2 s  aoa_deg 7.5 (same as ours); CL 0.883464 (same as ours); CD 0.155286 (same as ours)
-[ok  ] geometry export (TiGL)          7.7 s  wings 3 (same as ours); fuselages 1 (same as ours); span_m 33.9272 (same as ours); step_file True (same as ours); kernel native_tigl_closed_solids (same as ours)
-[ok  ] engine (pyCycle)                7.2 s  thrust_N 60000 (same as ours); fuel_flow_kg_s 1.05723 (same as ours); OPR 30.55 (same as ours)
-[ok  ] mission (NSEG)                  0.1 s  fuel_burned_kg 6439.46 (same as ours); distance_nm 760.747 (same as ours)
-[ok  ] CFD quick mesh (gmsh, SU2)     23.6 s  cells 50367 (same as ours); CL 0.0926342 (same as ours); CD 0.0237335 (same as ours); solver_converged False (same as ours)
-[ok  ] flow picture                    1.7 s  png_bytes 248342 (same as ours); surface_cells 2906 (same as ours)
-[ok  ] Aviary runs (its benchmark)     8.7 s  converged True (same as ours); iterations 27 (same as ours); fuel_burned_kg 7309.72 (same as ours)
-       this test's tool log: /data/aircraft-runs/20261123-171340-ce4338
-[ok  ] web gateway answers             0.2 s  tools 67; servers 5  http://127.0.0.1:8800/mcp
+[ok  ] stored-run lookup               0.1 s  aoa_deg 7.5 (same as ours); CL 0.883464 (same as ours); CD 0.155286 (same as ours)
+[ok  ] geometry export (TiGL)          6.9 s  wings 3 (same as ours); fuselages 1 (same as ours); span_m 33.9272 (same as ours); step_file True (same as ours); kernel native_tigl_closed_solids (same as ours)
+[ok  ] engine (pyCycle)                8.5 s  thrust_N 60000 (same as ours); fuel_flow_kg_s 1.05723 (same as ours); OPR 30.55 (same as ours)
+[ok  ] mission (NSEG)                  0.0 s  fuel_burned_kg 6439.46 (same as ours); distance_nm 760.747 (same as ours)
+[ok  ] CFD quick mesh (gmsh, SU2)     34.2 s  cells 50367 (same as ours); CL 0.0926342 (same as ours); CD 0.0237335 (same as ours); solver_converged False (same as ours)
+[ok  ] flow picture                    1.5 s  png_bytes 248342 (same as ours); surface_cells 2906 (same as ours)
+[ok  ] Aviary runs (its benchmark)     9.3 s  converged True (same as ours); iterations 27 (same as ours); fuel_burned_kg 7309.72 (same as ours)
+       this test's tool log: /data/aircraft-runs/20261123-210023-8f5ccd
+[ok  ] web gateway answers             3.1 s  tools 67; servers 5  http://127.0.0.1:8800/mcp
 [ok  ] status page answers             0.0 s  healthz 200; page 200  http://127.0.0.1:8765
 
-12 ok, 0 failed, 0 skipped, 55 s. Full results: /data/selftest/20261123-171338/selftest_result.json
+12 ok, 0 failed, 0 skipped, 69 s. Full results: /data/selftest/20261123-210022/selftest_result.json
 ```
 
 These numbers only show that each solver runs. None of them is an answer
@@ -114,9 +115,10 @@ to a study task: the test uses its own angle, engine thrust, mass and
 range, the CFD case is a coarse mesh that is not converged, and the Aviary
 line is Aviary's own benchmark aircraft.
 
-We recorded these numbers on an Apple laptop, which runs the image through
-x86-64 emulation, and got the same numbers, every one, on a real x86-64
-machine (an Intel Xeon build machine, with docker and with podman). The
+We recorded the reference numbers on an Apple laptop, which runs the image
+through x86-64 emulation, and got the same numbers, every one, on real
+x86-64 machines (an Intel Xeon and an AMD EPYC build machine, with docker
+and with podman). The
 file checks and the stored-run lookup must be exactly the same everywhere.
 For the solver steps, a difference in the last digits on other hardware is
 not a problem; a different CFD cell count is worth telling us.
@@ -195,6 +197,10 @@ puts fresh copies of the two aircraft files in `/data/study`.
   each chat window starts its own gateway. For a hosted study this means
   one container for each participant and aircraft, or a change on our side.
   This is the main design question still open.
+- **No language model inside.** One tool, `run_aircraft_analysis`, hands a
+  whole analysis to a local Gemma model. Here it answers with a
+  `missing_dependency` error that says so. Every other tool works without
+  a model.
 - **No Kiro inside.** How people sign in to Kiro on the platform, and
   whether the platform can reach Kiro's service, decide whether Kiro can
   run next to the tools or stays on each laptop.

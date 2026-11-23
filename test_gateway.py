@@ -213,8 +213,12 @@ def test_mode_b_links_the_agent_session(monkeypatch, tmp_path):
     assert out["final_report"] == "report text"
 
 
-def test_dashboard_serves_session_reports(tmp_path):
+def test_dashboard_serves_session_reports(tmp_path, monkeypatch):
     import socket
+
+    # The laptop default. The container image sets this to "*", and this
+    # suite is also run inside the image.
+    monkeypatch.delenv("AIRCRAFT_DASHBOARD_ALLOWED_HOSTS", raising=False)
     import threading
     import time
 
@@ -649,3 +653,46 @@ def test_served_over_http_a_slow_one_call_tool_does_not_stop_the_gateway_answeri
     assert seen["result"] == {"CL": 0.1}
     assert seen["status_answered"] < seen["handler_done"]
     assert seen["working_file_during_the_call"] == str((tmp_path / "a.xml").resolve())
+
+
+def test_hand_off_names_the_missing_local_model(monkeypatch, tmp_path):
+    """Without Ollama the agent script stops at its first model call. The
+    hand-off must then say that the local model is what is missing (in the
+    container, which has no model inside, it used to say only "incomplete").
+    The agent script is replaced by a stand-in process result that carries
+    the script's real last line for that case."""
+    import subprocess as sp
+
+    from aircraft_mcp import local_agent
+
+    (tmp_path / "a.xml").write_text("<cpacs/>")
+    (tmp_path / "agent-mcp").mkdir()
+    (tmp_path / "agent-mcp" / "hybrid_agent.py").write_text("")
+    monkeypatch.setattr(local_agent, "project_root", lambda: tmp_path)
+
+    def stopped(stderr: str):
+        def run(cmd, **kwargs):
+            return sp.CompletedProcess(cmd, 1, stdout="--- Turn 1 [planner=gemma4:e4b] ---\n", stderr=stderr)
+        return run
+
+    no_ollama = (
+        "ConnectionError: Failed to connect to Ollama. Please check that Ollama is "
+        "downloaded, running and accessible. https://ollama.com/download"
+    )
+    monkeypatch.setattr(local_agent.subprocess, "run", stopped(no_ollama))
+    out = local_agent.run_local_agent("x", str(tmp_path / "a.xml"))
+    assert out["error"]["type"] == "missing_dependency"
+    assert "Ollama did not answer" in out["error"]["message"]
+    assert "ollama.com/download" in out["error"]["message"]
+    assert out["completed"] is False
+
+    monkeypatch.setattr(local_agent.subprocess, "run", stopped("ollama._types.ResponseError: model 'gemma4:e4b' not found (status code: 404)"))
+    out = local_agent.run_local_agent("x", str(tmp_path / "a.xml"))
+    assert out["error"]["type"] == "missing_dependency"
+    assert "ollama pull gemma4:e4b" in out["error"]["message"]
+
+    # Any other early stop keeps the general answer, now with the script's last lines.
+    monkeypatch.setattr(local_agent.subprocess, "run", stopped("ValueError: something else"))
+    out = local_agent.run_local_agent("x", str(tmp_path / "a.xml"))
+    assert out["error"]["type"] == "agent_incomplete"
+    assert "something else" in out["stderr_tail"]

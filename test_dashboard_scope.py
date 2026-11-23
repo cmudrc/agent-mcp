@@ -105,6 +105,9 @@ def _serve(tmp_path, monkeypatch, allowed=None):
 
 
 def test_page_refuses_other_host_names_and_says_what_to_set(tmp_path, monkeypatch):
+    # The laptop default. The container image sets this to "*", and this
+    # suite is also run inside the image.
+    monkeypatch.delenv("AIRCRAFT_DASHBOARD_ALLOWED_HOSTS", raising=False)
     get = _serve(tmp_path, monkeypatch)
     assert get("/")[0] == 200
     code, body, _ = get("/", host="tools.apps.example.com")

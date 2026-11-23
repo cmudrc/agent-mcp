@@ -63,6 +63,27 @@ def _hybrid_script(root: Path) -> Path:
     return beside if beside.is_file() else in_root
 
 
+def _missing_model(stderr: str) -> str | None:
+    """What to tell the caller when the agent stopped because the local model
+    could not be reached, or None when that was not the reason."""
+    if "Failed to connect to Ollama" in stderr:
+        return (
+            "The local model is not available: Ollama did not answer on this "
+            "machine. This tool hands the whole analysis to a local Gemma model "
+            "and needs Ollama running with gemma4:e4b (https://ollama.com/download, "
+            "then `ollama pull gemma4:e4b`). The other tools do not need a model: "
+            "call them directly."
+        )
+    m = re.search(r"model ['\"]?([\w.:/-]+)['\"]? not found", stderr)
+    if m:
+        return (
+            f"The local model is not available: Ollama is running but the model "
+            f"{m.group(1)} is not there. Fetch it with `ollama pull {m.group(1)}`. "
+            "The other tools do not need a model: call them directly."
+        )
+    return None
+
+
 def run_local_agent(
     prompt: str,
     cpacs_path: str,
@@ -169,14 +190,21 @@ def run_local_agent(
         report = Path(session_dir) / "report.html"
         result["agent_report_html"] = str(report) if report.is_file() else None
     if final is None:
-        result["error"] = {
-            "type": "agent_incomplete",
-            "message": (
-                "The agent did not produce a final report (turn budget, a "
-                "tool error it reported, or a missing dependency; see "
-                "stdout_tail and the trace)."
-            ),
-        }
+        result["stderr_tail"] = (proc.stderr or "")[-1500:]
+        missing = _missing_model(proc.stderr or "")
+        if missing:
+            # Say exactly what is missing (seen 2026-11-23 in the container,
+            # which has no model inside: the answer was only "incomplete").
+            result["error"] = {"type": "missing_dependency", "message": missing}
+        else:
+            result["error"] = {
+                "type": "agent_incomplete",
+                "message": (
+                    "The agent did not produce a final report (turn budget, a "
+                    "tool error it reported, or a missing dependency; see "
+                    "stdout_tail, stderr_tail and the trace)."
+                ),
+            }
     # Only files this run wrote: older runs' files share these names.
     arts = []
     for pat in ("pipeline_output/*.step", "pipeline_output/su2_run*/*.vtu",

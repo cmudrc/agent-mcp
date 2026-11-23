@@ -138,6 +138,12 @@ def _off_the_event_loop(handler: Any, executor: MainThreadExecutor) -> Any:
     return waiting
 
 
+def off_the_event_loop(handler: Any) -> Any:
+    """``handler`` unchanged on a stdio gateway; served over HTTP, a coroutine
+    that has the main thread run it (see MainThreadExecutor)."""
+    return handler if _executor is None else _off_the_event_loop(handler, _executor)
+
+
 def register(gw: Any) -> list[str]:
     """Add the installed one-call tools and compare_cpacs_files to ``gw``.
 
@@ -154,10 +160,7 @@ def register(gw: Any) -> list[str]:
         description = spec["schema"]["function"]["description"]
         if gw_name != local_name:
             description += f" (The local agent calls this tool {local_name}.)"
-        handler = _prints_to_stderr(spec["handler"])
-        if _executor is not None:
-            handler = _off_the_event_loop(handler, _executor)
-        gw.tool(handler, name=gw_name, description=description)
+        gw.tool(off_the_event_loop(_prints_to_stderr(spec["handler"])), name=gw_name, description=description)
         added.append(gw_name)
     gw.tool(compare_cpacs_files)
     added.append("compare_cpacs_files")

@@ -176,7 +176,6 @@ def build_gateway(
         """Recent tool-call events of this gateway session (start/end, stage, duration)."""
         return {"events": log.this_run(int(last_n))}
 
-    @gw.tool
     def run_aircraft_analysis(
         prompt: str,
         cpacs_path: str,
@@ -200,5 +199,9 @@ def build_gateway(
             timeout_seconds=timeout_seconds,
             parent_session=middleware.runlog.session,
         )
+
+    # A whole agent run can take half an hour; served over HTTP it must not
+    # hold the server's event loop either.
+    gw.tool(one_call.off_the_event_loop(run_aircraft_analysis))
 
     return gw, log, skipped
