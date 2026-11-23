@@ -28,9 +28,11 @@ docker build --platform linux/amd64 -f container/Dockerfile --build-arg AGENT_MC
 ```
 
 The Dockerfile uses plain syntax only, so `podman build` with the same
-arguments should work; we have only built it with docker. To start from an
-internal copy of the base image, add
-`--build-arg BASE_IMAGE=<your registry>/ubi9-minimal`.
+arguments should work; we have only built it with docker. The base image
+is named in full, `docker.io/redhat/ubi9-minimal`, because podman does not
+guess the registry of a short name. Red Hat's own registry has the same
+image as `registry.access.redhat.com/ubi9/ubi-minimal`. To start from an
+internal copy, add `--build-arg BASE_IMAGE=<your registry>/ubi9-minimal`.
 
 The build needs to download from these places:
 
@@ -48,7 +50,8 @@ the Dockerfile. If the build machine cannot reach these places, tell us; we
 can send the built image as a file instead.
 
 The build took us about 3 minutes with a fast connection (it is almost all
-downloads). The image is about 1.2 GB compressed and 4 GB unpacked.
+downloads). The image is about 1.2 GB compressed; docker reports 5.5 GB on
+disk.
 
 ## Run
 
@@ -130,9 +133,34 @@ We have not been able to test this part. What we built for it:
 - Ports: 8800 (the tools, path `/mcp`) and 8765 (the status page).
 - Health check: `GET /healthz` on port 8765 answers `ok`.
 - Memory: the container uses about 90 MB idle and peaked at about 1.5 GB
-  during the self-test. The CFD tool can build much larger meshes when
-  asked, so please give it at least 4 GB.
-- `/tmp` must be writable (the geometry tool uses temporary files).
+  during the self-test. The self-test passes with a 2 GB limit and one CPU.
+  With 1 GB the kernel stops the gateway in the CFD step (the self-test
+  says so). The CFD tool can build much larger meshes when asked, so please
+  give it at least 4 GB.
+- `/tmp` must be writable (the geometry tool uses temporary files). The
+  root file system can be read-only if `/tmp` and `/data` are writable.
+- It needs no network at run time: the self-test passes with
+  `--network none`. Nothing is downloaded after the build.
+- It needs no Linux capabilities: the self-test passes with
+  `--cap-drop=ALL --security-opt=no-new-privileges`.
+- A user id that is not in group 0 cannot write to `/data`; the container
+  then stops at start-up and says so.
+
+Behind a route:
+
+- Give clients the address that ends in `/mcp`, with no slash after it.
+- A route drops a connection that has been silent for 30 seconds unless it
+  is told otherwise. While a tool runs, the gateway sends a keep-alive line
+  every 15 seconds, so longer calls get through. We tested this with
+  HAProxy 2.8 set up like a route (TLS ending at the proxy, plain HTTP to
+  the container, 30 s timeouts), not with a real route: a tool call of 114
+  seconds came back complete. Before this was in place, the proxy cut a 50
+  second call and the client waited for an answer that never came.
+- If long calls fail on your platform anyway, raise the route's timeout:
+  `oc annotate route <name> haproxy.router.openshift.io/timeout=30m`.
+- The status page uses only addresses relative to its own host, so it
+  works under the route's name. Set `AIRCRAFT_DASHBOARD_ALLOWED_HOSTS` to
+  that name if you want it to refuse every other.
 
 Settings, all optional (environment variables):
 
@@ -146,7 +174,7 @@ Settings, all optional (environment variables):
 
 Other commands: `docker run --rm aircraft-tools versions` lists what is
 installed, `docker run --rm aircraft-tools selftest` runs the self-test
-without the web gateway (its last two lines then say "skip"), and `reset`
+without the web gateway (its last line then says "skip"), and `reset`
 puts fresh copies of the two aircraft files in `/data/study`.
 
 ## What this first version does not do
@@ -163,6 +191,9 @@ puts fresh copies of the two aircraft files in `/data/study`.
 - **No Kiro inside.** How people sign in to Kiro on the platform, and
   whether the platform can reach Kiro's service, decide whether Kiro can
   run next to the tools or stays on each laptop.
+- **One tool at a time.** The gateway answers other requests while a tool
+  runs (status, lookups, a second client connecting), but the tools that
+  run a solver wait for each other.
 - **CFD runs on one core.** The SU2 release binary has no MPI. A quick-mesh
   run takes about 20 seconds; fine meshes take many minutes to hours.
 - **Quick-mesh CFD numbers differ from our Mac's.** The mesher (gmsh)

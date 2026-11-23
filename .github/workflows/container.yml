@@ -1,0 +1,90 @@
+name: Container
+
+# Builds container/Dockerfile on a real x86-64 machine and runs the self-test
+# inside it (every real tool once, see container/README.md), once with docker
+# and once with podman. Runs when the container files change, or by hand.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "container/**"
+      - ".dockerignore"
+      - ".github/workflows/container.yml"
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  docker:
+    name: docker build, self-test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Machine
+        run: |
+          uname -m
+          lscpu | grep -E "Model name|^CPU\(s\)"
+          free -g | head -2
+          docker --version
+      - name: Build
+        run: |
+          docker build --platform linux/amd64 -f container/Dockerfile \
+            --build-arg AGENT_MCP_COMMIT=$GITHUB_SHA -t aircraft-tools .
+      - name: Start (arbitrary user id in group 0, no capabilities)
+        run: |
+          docker run -d --name tools --user 1234567:0 --cap-drop=ALL \
+            --security-opt=no-new-privileges -p 8800:8800 -p 8765:8765 aircraft-tools
+          for i in $(seq 1 60); do
+            curl -fsS http://localhost:8765/healthz && break
+            sleep 2
+          done
+          curl -fsS http://localhost:8765/healthz
+      - name: Self-test
+        run: docker exec tools aircraft-selftest | tee selftest_docker.txt
+      - name: Self-test with no network
+        run: |
+          docker run --rm --network none --user 1234567:0 --cap-drop=ALL \
+            aircraft-tools selftest | tee selftest_docker_no_network.txt
+      - name: Versions, start-up log, size
+        if: always()
+        run: |
+          docker exec tools cat /opt/aircraft/VERSIONS.txt || true
+          docker logs tools 2>&1 | tail -60 || true
+          docker image inspect aircraft-tools --format 'image size {{.Size}} bytes' || true
+          docker cp tools:/data/selftest selftest_docker || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: selftest-docker
+          path: |
+            selftest_docker.txt
+            selftest_docker_no_network.txt
+            selftest_docker/**/selftest_result.json
+
+  podman:
+    name: podman build, self-test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Machine
+        run: |
+          uname -m
+          podman --version
+      - name: Build
+        run: |
+          podman build --platform linux/amd64 -f container/Dockerfile \
+            --build-arg AGENT_MCP_COMMIT=$GITHUB_SHA -t aircraft-tools .
+      - name: Self-test (rootless, arbitrary user id in group 0)
+        run: |
+          podman run --rm --user 54321:0 --cap-drop=ALL \
+            aircraft-tools selftest | tee selftest_podman.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: selftest-podman
+          path: selftest_podman.txt

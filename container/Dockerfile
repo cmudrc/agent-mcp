@@ -16,7 +16,10 @@
 # github.com. Every version is pinned (conda-linux-64.lock, constraints.txt,
 # the commit ids below, SU2 8.4.0 in su2-mcp's install script).
 
-ARG BASE_IMAGE=redhat/ubi9-minimal:latest
+# The full name, registry included: podman does not guess the registry of a
+# short name when it has no terminal to ask on. Red Hat publishes the same
+# image as registry.access.redhat.com/ubi9/ubi-minimal.
+ARG BASE_IMAGE=docker.io/redhat/ubi9-minimal:latest
 FROM ${BASE_IMAGE}
 
 # The other tool repositories, at the commits this image was tested with.
@@ -64,7 +67,8 @@ ENV PATH=/opt/aircraft/env/bin:/opt/su2/bin:${PATH}
 COPY container/constraints.txt /opt/aircraft/container/constraints.txt
 RUN python -m pip install --no-cache-dir --root-user-action=ignore \
         -c /opt/aircraft/container/constraints.txt \
-        numpy pyvista matplotlib gmsh openmdao om-pycycle aviary dymos pillow lxml pyyaml
+        numpy pyvista matplotlib gmsh openmdao om-pycycle aviary dymos pillow lxml pyyaml \
+    && rm -rf /root/.cache
 
 # 4. The four solver servers and the Aviary server, from GitHub at the pinned
 #    commits, and this repository (the gateway) from the build context.
@@ -81,13 +85,15 @@ RUN cd /opt/aircraft \
         -c /opt/aircraft/container/constraints.txt \
         -e ./tigl-mcp -e ./su2-mcp -e ./pycycle-mcp -e ./nseg-mcp -e ./aviary-cpacs-mcp -e ./agent-mcp \
     && python -m pip check \
-    && { python -m compileall -q /opt/aircraft/*-mcp >/dev/null || true; }
+    && { python -m compileall -q /opt/aircraft/*-mcp >/dev/null || true; } \
+    && rm -rf /root/.cache
 
 # 5. SU2 8.4.0, with the project's own install script (official release
 #    binary, statically linked; the script refuses to finish unless SU2_CFD
 #    runs and reports that version).
 RUN SU2_INSTALL_DIR=/opt/su2 bash /opt/aircraft/su2-mcp/scripts/install_su2.sh \
-    && SU2_CFD -h | head -1
+    && SU2_CFD -h | head -1 \
+    && rm -rf /root/.cache
 
 # Start-up script, the self-test command, the list of what is installed, and
 # an empty, group-writable /data.
@@ -101,7 +107,7 @@ RUN chmod 0755 /opt/aircraft/agent-mcp/container/entrypoint.sh \
          python -c "import sys, numpy, vtk, gmsh, openmdao, aviary, fastmcp; print('python', sys.version.split()[0]); print('numpy', numpy.__version__); print('gmsh', gmsh.__version__); print('vtk', vtk.vtkVersion.GetVTKVersion()); print('openmdao', openmdao.__version__); print('aviary', aviary.__version__); print('fastmcp', fastmcp.__version__)" 2>/dev/null; \
        } > /opt/aircraft/VERSIONS.txt \
     && cat /opt/aircraft/VERSIONS.txt \
-    && rm -rf /data && mkdir /data && chgrp 0 /data && chmod 0775 /data
+    && rm -rf /data /root/.cache && mkdir /data && chgrp 0 /data && chmod 0775 /data
 
 # 6. Runtime layout. /data is the only place anything is written: session
 #    logs, solver output, working copies of the aircraft files. OpenShift
@@ -109,6 +115,9 @@ RUN chmod 0755 /opt/aircraft/agent-mcp/container/entrypoint.sh \
 #    to group 0 and is group-writable; mount a volume there to keep records.
 #    These are set after the last RUN on purpose, so that no build step
 #    leaves a root-owned cache folder in /data.
+#    FORWARDED_ALLOW_IPS: the web server believes the X-Forwarded-Proto header
+#    of whatever proxy is in front (an OpenShift route ends TLS and passes
+#    plain HTTP on), so its one redirect, /mcp/ to /mcp, keeps https.
 ENV HOME=/data \
     AIRCRAFT_DATA_DIR=/data \
     AIRCRAFT_RUNS_DIR=/data/aircraft-runs \
@@ -119,6 +128,7 @@ ENV HOME=/data \
     AIRCRAFT_SU2_BIN=/opt/su2/bin \
     AIRCRAFT_DASHBOARD_HOST=0.0.0.0 \
     AIRCRAFT_DASHBOARD_ALLOWED_HOSTS=* \
+    FORWARDED_ALLOW_IPS=* \
     OPENMDAO_REPORTS=0 \
     PYVISTA_OFF_SCREEN=true \
     VTK_DEFAULT_OPENGL_WINDOW=vtkEGLRenderWindow \

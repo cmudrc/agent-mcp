@@ -49,6 +49,18 @@ def main() -> int:
     args = p.parse_args()
 
     skip = {s.strip() for s in args.skip.split(",") if s.strip()}
+
+    # Served over HTTP, the one-call tools must not run on the server's event
+    # loop (see one_call.MainThreadExecutor): the server goes to its own
+    # thread below and this thread runs the tool code. A stdio gateway is
+    # built and run exactly as before.
+    executor = None
+    if args.transport != "stdio":
+        from aircraft_mcp import one_call
+
+        executor = one_call.MainThreadExecutor()
+        one_call.use_executor(executor)
+
     gw, log, skipped = build_gateway(skip=skip or None)
     if skipped:
         print(f"[aircraft-mcp] not mounted: {', '.join(skipped)}", file=sys.stderr)
@@ -100,8 +112,25 @@ def main() -> int:
 
     if args.transport == "stdio":
         gw.run()
-    else:
-        gw.run(transport=args.transport, host=args.host, port=args.port)
+        return 0
+
+    failure: list[BaseException] = []
+
+    def _serve() -> None:
+        try:
+            gw.run(transport=args.transport, host=args.host, port=args.port)
+        except BaseException as exc:  # reported by the main thread below
+            failure.append(exc)
+
+    server = threading.Thread(target=_serve, name="mcp-http", daemon=True)
+    server.start()
+    try:
+        executor.run_until(lambda: not server.is_alive())
+    except KeyboardInterrupt:
+        return 130
+    if failure and not isinstance(failure[0], (KeyboardInterrupt, SystemExit)):
+        print(f"[aircraft-mcp] the web server stopped: {type(failure[0]).__name__}: {failure[0]}", file=sys.stderr)
+        return 1
     return 0
 
 

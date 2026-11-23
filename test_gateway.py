@@ -550,3 +550,102 @@ def test_one_call_tool_progress_text_goes_to_stderr_not_stdout(tmp_path, capsys)
     out = capsys.readouterr()
     assert "Meshing STEP" not in out.out
     assert "Meshing STEP" in out.err
+
+
+def test_main_thread_executor_runs_calls_in_order_and_passes_errors_on():
+    """The executor behind a gateway served over HTTP: calls submitted from
+    another thread run on the thread that drives it, one at a time, in order,
+    and an error reaches the caller instead of stopping the loop."""
+    import threading
+
+    from aircraft_mcp.one_call import MainThreadExecutor
+
+    ex = MainThreadExecutor()
+    ran_on: list[bool] = []
+    order: list[int] = []
+    got: list[object] = []
+
+    def job(n: int) -> int:
+        ran_on.append(threading.current_thread() is threading.main_thread())
+        order.append(n)
+        if n == 2:
+            raise ValueError("two")
+        return n * 10
+
+    def submitter() -> None:
+        futures = [ex.submit(job, n) for n in (1, 2, 3)]
+        for f in futures:
+            try:
+                got.append(f.result(timeout=10))
+            except ValueError as exc:
+                got.append(str(exc))
+
+    t = threading.Thread(target=submitter)
+    t.start()
+    ex.run_until(lambda: not t.is_alive())
+    assert order == [1, 2, 3]
+    assert got == [10, "two", 30]
+    assert ran_on == [True, True, True]
+
+
+def test_served_over_http_a_slow_one_call_tool_does_not_stop_the_gateway_answering(tmp_path):
+    """Served over HTTP, the gateway is built with the main-thread executor
+    (aircraft_mcp.__main__). A one-call tool that blocks for a while then runs
+    on the main thread, and the gateway still answers another request in the
+    meantime. On a stdio gateway the same call holds the event loop, which
+    behind a proxy with a 30 s idle timeout lost the answer of a 50 s CFD run
+    (2026-11-23). The solver is replaced by a stand-in that sleeps."""
+    import threading
+    import time
+
+    import gemma_agent as g
+    from aircraft_mcp import one_call
+
+    seen: dict[str, object] = {}
+
+    def stand_in(cpacs_path: str, mach: float | None = None) -> dict:
+        seen["on_main_thread"] = threading.current_thread() is threading.main_thread()
+        time.sleep(0.8)
+        seen["handler_done"] = time.monotonic()
+        return {"CL": 0.1}
+
+    schema = g.TOOLS["su2_run_aero"]["schema"]
+    real = g.TOOLS["su2_run_aero"]
+    g.tool("su2_run_aero", schema)(stand_in)
+    executor = one_call.MainThreadExecutor()
+    one_call.use_executor(executor)
+    errors: list[BaseException] = []
+    try:
+        gw, _, _ = build_gateway(state_dir=tmp_path, skip={p for p, _ in SERVERS})
+
+        async def check():
+            async with Client(gw) as c:
+                props = {t.name: t for t in await c.list_tools()}["su2_run_aero"].inputSchema["properties"]
+                assert {"cpacs_path", "mach"} <= set(props)  # the wrapper keeps the inputs
+                slow = asyncio.create_task(
+                    c.call_tool("su2_run_aero", {"cpacs_path": str(tmp_path / "a.xml")}, raise_on_error=False)
+                )
+                await asyncio.sleep(0.2)
+                status = (await c.call_tool("gateway_status", {})).data
+                seen["status_answered"] = time.monotonic()
+                seen["working_file_during_the_call"] = status["working_file"]
+                seen["result"] = (await slow).data
+
+        def client_thread() -> None:
+            try:
+                asyncio.run(check())
+            except BaseException as exc:  # shown by the main thread below
+                errors.append(exc)
+
+        t = threading.Thread(target=client_thread)
+        t.start()
+        executor.run_until(lambda: not t.is_alive())
+    finally:
+        one_call.use_executor(None)
+        g.TOOLS["su2_run_aero"] = real
+    if errors:
+        raise errors[0]
+    assert seen["on_main_thread"] is True
+    assert seen["result"] == {"CL": 0.1}
+    assert seen["status_answered"] < seen["handler_done"]
+    assert seen["working_file_during_the_call"] == str((tmp_path / "a.xml").resolve())

@@ -104,6 +104,19 @@ class Report:
         return sum(1 for r in self.rows if r["status"] == "FAIL")
 
 
+# Seen with a 1 GB memory limit: the kernel stops the gateway in the middle
+# of the CFD step and the client only reports a closed connection.
+GATEWAY_GONE_HINT = (
+    "(the gateway process ended during this step. A memory limit is the likely "
+    "cause: this test passes for us with 2 GB and fails this way with 1 GB)"
+)
+
+
+def _connection_lost(exc: BaseException) -> bool:
+    name = type(exc).__name__
+    return name in ("ClosedResourceError", "BrokenResourceError", "BrokenPipeError", "EndOfStream") or "Connection closed" in str(exc)
+
+
 def _error_of(data: Any) -> str | None:
     if isinstance(data, dict) and isinstance(data.get("error"), dict):
         e = data["error"]
@@ -131,13 +144,22 @@ async def tool_steps(rep: Report, work: Path, files: Path, quick: bool) -> None:
     # the test's own folder, where Aviary's output folder (*_out) then lands.
     transport = StdioTransport(command, [], env=env, cwd=str(work), keep_alive=False)
     async with Client(transport, timeout=3600) as client:
+        gone = False  # the gateway process ended under us
 
         async def call(step: str, tool: str, args: dict[str, Any], pick) -> Any:
+            nonlocal gone
+            if gone:
+                rep.add(step, "skip", None, {}, "the gateway had stopped")
+                return None
             t0 = time.time()
             try:
                 data = _unwrap(await client.call_tool(tool, args, raise_on_error=False))
             except Exception as exc:  # the call itself failed (transport, timeout)
-                rep.add(step, "FAIL", time.time() - t0, {}, f"{type(exc).__name__}: {exc}")
+                note = f"{type(exc).__name__}: {exc}".rstrip(": ")
+                if _connection_lost(exc):
+                    gone = True
+                    note += " " + GATEWAY_GONE_HINT
+                rep.add(step, "FAIL", time.time() - t0, {}, note)
                 return None
             seconds = time.time() - t0
             err = _error_of(data)
@@ -235,9 +257,10 @@ async def tool_steps(rep: Report, work: Path, files: Path, quick: bool) -> None:
             lambda d: {"converged": d["success"] or None, "iterations": d.get("iterations"), "fuel_burned_kg": float(d["fuel_burned_kg"])},
         )
 
-        status = _unwrap(await client.call_tool("gateway_status", {}, raise_on_error=False))
-        if isinstance(status, dict) and status.get("session_log"):
-            print(f"       this test's tool log: {status['session_log']}")
+        if not gone:
+            status = _unwrap(await client.call_tool("gateway_status", {}, raise_on_error=False))
+            if isinstance(status, dict) and status.get("session_log"):
+                print(f"       this test's tool log: {status['session_log']}")
 
 
 def _get(url: str, timeout: float = 10) -> tuple[int, bytes]:
@@ -302,7 +325,10 @@ def main() -> int:
 
     rep = Report(reference)
     t0 = time.time()
-    asyncio.run(tool_steps(rep, out, files, args.quick))
+    try:
+        asyncio.run(tool_steps(rep, out, files, args.quick))
+    except Exception as exc:  # still print the summary and write the result file
+        rep.add("tool steps ended early", "FAIL", None, {}, f"{type(exc).__name__}: {exc}".rstrip(": "))
     asyncio.run(web_steps(rep, args.url or "http://127.0.0.1:8800/mcp", args.page or "http://127.0.0.1:8765", required=bool(args.url)))
 
     result = {

@@ -20,9 +20,12 @@ raw session tools already use them on the gateway:
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import contextlib
 import functools
 import hashlib
+import queue
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -69,6 +72,72 @@ def _prints_to_stderr(handler: Any) -> Any:
     return wrapped
 
 
+class MainThreadExecutor(concurrent.futures.Executor):
+    """Runs submitted calls on the thread that calls :meth:`run_until`, one
+    at a time, in the order they came.
+
+    For a gateway served over HTTP. A one-call handler is ordinary blocking
+    code that can run for minutes. Called on the server's event loop, as on a
+    stdio gateway, it stops the server from answering anything else for that
+    long: no second client can connect and no keep-alive goes out on the
+    waiting connection. Measured 2026-11-23 behind a proxy with a 30 s idle
+    timeout (the default of an OpenShift route): a 50 s CFD call finished on
+    the server and its answer never reached the client.
+
+    The handlers still run on the main thread and one at a time, as they
+    always have. The mesher (gmsh) installs a signal handler when it starts,
+    which Python allows on the main thread only, so a worker thread is not
+    an option. The server's event loop is what moves to another thread.
+    """
+
+    def __init__(self) -> None:
+        self._jobs: queue.SimpleQueue[tuple[Any, Any, tuple, dict]] = queue.SimpleQueue()
+
+    def submit(self, fn: Any, /, *args: Any, **kwargs: Any) -> concurrent.futures.Future:
+        future: concurrent.futures.Future = concurrent.futures.Future()
+        self._jobs.put((future, fn, args, kwargs))
+        return future
+
+    def run_until(self, finished: Any, poll_s: float = 0.2) -> None:
+        """Run submitted calls on this thread until ``finished()`` is true."""
+        while not finished():
+            try:
+                future, fn, args, kwargs = self._jobs.get(timeout=poll_s)
+            except queue.Empty:
+                continue
+            if not future.set_running_or_notify_cancel():
+                continue  # the caller gave up before it started
+            try:
+                future.set_result(fn(*args, **kwargs))
+            except Exception as exc:
+                future.set_exception(exc)
+            except BaseException as exc:  # Ctrl-C, SystemExit: tell the caller, then stop
+                future.set_exception(exc)
+                raise
+
+
+#: Set before the gateway is built when it is served over HTTP
+#: (aircraft_mcp.__main__). None on a stdio gateway, where the handlers are
+#: registered exactly as before.
+_executor: MainThreadExecutor | None = None
+
+
+def use_executor(executor: MainThreadExecutor | None) -> None:
+    global _executor
+    _executor = executor
+
+
+def _off_the_event_loop(handler: Any, executor: MainThreadExecutor) -> Any:
+    """``handler`` as a coroutine that waits for ``executor`` to run it."""
+
+    @functools.wraps(handler)
+    async def waiting(*args: Any, **kwargs: Any) -> Any:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(executor, functools.partial(handler, *args, **kwargs))
+
+    return waiting
+
+
 def register(gw: Any) -> list[str]:
     """Add the installed one-call tools and compare_cpacs_files to ``gw``.
 
@@ -85,7 +154,10 @@ def register(gw: Any) -> list[str]:
         description = spec["schema"]["function"]["description"]
         if gw_name != local_name:
             description += f" (The local agent calls this tool {local_name}.)"
-        gw.tool(_prints_to_stderr(spec["handler"]), name=gw_name, description=description)
+        handler = _prints_to_stderr(spec["handler"])
+        if _executor is not None:
+            handler = _off_the_event_loop(handler, _executor)
+        gw.tool(handler, name=gw_name, description=description)
         added.append(gw_name)
     gw.tool(compare_cpacs_files)
     added.append("compare_cpacs_files")

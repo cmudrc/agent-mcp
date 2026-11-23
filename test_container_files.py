@@ -65,3 +65,14 @@ def test_selftest_stays_away_from_the_study_task_conditions():
     lookup = ref["steps"]["stored-run lookup"]
     assert set(lookup) == {"aoa_deg", "CL", "CD"} and lookup["aoa_deg"] == 7.5
     assert set(ref["steps"]["the two study files"]) == {"file_A", "stored_runs_A", "file_B", "stored_runs_B"}
+
+
+def test_dockerfile_names_the_registry_of_the_base_image_and_trusts_the_proxy_header():
+    """Two things found when testing the image the way a platform runs it
+    (2026-11-23): podman does not resolve a short image name without a
+    terminal to ask on, and behind a route that ends TLS the redirect from
+    /mcp/ to /mcp went to http unless the server trusts X-Forwarded-Proto."""
+    text = (HERE / "container" / "Dockerfile").read_text()
+    base = next(line.split("=", 1)[1] for line in text.splitlines() if line.startswith("ARG BASE_IMAGE="))
+    assert base.count("/") >= 2 and "." in base.split("/")[0], base
+    assert "FORWARDED_ALLOW_IPS=*" in text
