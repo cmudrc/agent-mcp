@@ -6,14 +6,28 @@ newest pressure render of this session (earlier runs are not shown). /sessions
 serves the session index and each session's report (see aircraft_mcp.viewer),
 rendered fresh from the session logs on every request. Standard library only;
 read-only over the progress files, the output folders and the session logs.
+
+By default the page listens on this machine only (127.0.0.1) and answers
+only to its own localhost names. In a container the page has to be reached
+from outside the process: ``host`` (``AIRCRAFT_DASHBOARD_HOST``) sets the
+address it listens on and ``allowed_hosts``
+(``AIRCRAFT_DASHBOARD_ALLOWED_HOSTS``, comma separated) adds the host names
+it answers to, for example the name of the route in front of it; ``*``
+answers to any name. The page has no login: whoever can reach the port can
+read the session logs. ``/healthz`` answers "ok" to any caller, for a
+platform's liveness check, and ``/sessions/download.zip`` is every session
+folder in one file.
 """
 
 from __future__ import annotations
 
+import io
 import json
+import os
 import re
 import socket
 import time
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -37,7 +51,8 @@ _PAGE = """<!doctype html>
  img{max-width:100%;border:1px solid #e5e1d8;border-radius:6px;margin-top:1rem}
 </style></head><body>
 <h1>Aircraft analysis: live progress</h1>
-<div class="muted"><a href="/sessions/">Session reports</a>: every model call and tool call, per session</div>
+<div class="muted"><a href="/sessions/">Session reports</a>: every model call and tool call, per session
+ &middot; <a href="/sessions/download.zip">Download all session records (zip)</a></div>
 <div class="stage" id="stage">idle</div>
 <div class="muted" id="meta"></div>
 <table id="events"><tr><th>time</th><th>stage</th><th>tool</th><th>status</th><th>duration</th></tr></table>
@@ -67,17 +82,66 @@ setInterval(tick, 2000); tick();
 
 
 
-def free_port(preferred: int, tries: int = 11) -> int | None:
+LOCAL_HOST = "127.0.0.1"
+
+
+def bind_host(host: str | None = None) -> str:
+    """The address the page listens on: the argument, else
+    ``AIRCRAFT_DASHBOARD_HOST``, else this machine only."""
+    return (host or os.environ.get("AIRCRAFT_DASHBOARD_HOST") or LOCAL_HOST).strip()
+
+
+def extra_allowed_hosts(names: str | None = None) -> set[str]:
+    """Host names the page answers to besides its localhost names, lower
+    case, from the argument or ``AIRCRAFT_DASHBOARD_ALLOWED_HOSTS`` (comma
+    separated). ``*`` means any name."""
+    raw = names if names is not None else os.environ.get("AIRCRAFT_DASHBOARD_ALLOWED_HOSTS", "")
+    return {n.strip().lower() for n in raw.split(",") if n.strip()}
+
+
+def host_allowed(header: str | None, port: int, extra: set[str]) -> bool:
+    """Whether a request's Host header names this page.
+
+    The localhost names must carry this page's port, as before. A name from
+    ``extra`` matches with or without a port, because a route or proxy in
+    front of the page usually listens on 80 or 443.
+    """
+    if "*" in extra:
+        return True
+    host = (header or "").strip().lower()
+    if host in {f"127.0.0.1:{port}", f"localhost:{port}"}:
+        return True
+    name = host.rsplit(":", 1)[0] if ":" in host and not host.endswith("]") else host
+    return host in extra or name in extra
+
+
+def free_port(preferred: int, tries: int = 11, host: str | None = None) -> int | None:
     """The preferred port if it can be bound, else the next free one, else None."""
     for port in range(preferred, preferred + tries):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
-                sock.bind(("127.0.0.1", port))
+                sock.bind((bind_host(host), port))
             except OSError:
                 continue
             return port
     return None
+
+
+def records_zip(root: Path) -> bytes:
+    """Every session folder under ``root`` as one zip file, built in memory.
+
+    Regular files only, by their path relative to ``root``. A session that
+    met a restricted name recorded nothing after that point (see
+    aircraft_mcp.runlog), so there is nothing restricted to leave out here.
+    """
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        if root.is_dir():
+            for path in sorted(root.rglob("*")):
+                if path.is_file() and not path.is_symlink():
+                    zf.write(path, path.relative_to(root).as_posix())
+    return buf.getvalue()
 
 
 def _latest_render() -> Path | None:
@@ -96,23 +160,39 @@ def _latest_render() -> Path | None:
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
-def serve_dashboard(log: ProgressLog, port: int) -> None:
-    # Only this machine's own names for the server. A web page on another
-    # site that rebinds its DNS name to 127.0.0.1 sends its own name as Host
-    # and is refused, so it cannot read the session logs.
-    allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+def serve_dashboard(
+    log: ProgressLog,
+    port: int,
+    host: str | None = None,
+    allowed_hosts: str | None = None,
+) -> None:
+    # Only this machine's own names for the server, unless more are named. A
+    # web page on another site that rebinds its DNS name to this address
+    # sends its own name as Host and is refused, so it cannot read the
+    # session logs.
+    listen = bind_host(host)
+    extra = extra_allowed_hosts(allowed_hosts)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a) -> None:  # quiet
             return
 
         def _host_ok(self) -> bool:
-            host = (self.headers.get("Host") or "").strip().lower()
-            if host in allowed_hosts:
+            header = self.headers.get("Host")
+            if host_allowed(header, port, extra):
                 return True
+            # Say what to set, so a first deployment behind a route is not
+            # a blank refusal. The text names only the caller's own header.
+            body = (
+                f"Refused: this page does not answer to the host name {header!r}.\n"
+                "Start the gateway with AIRCRAFT_DASHBOARD_ALLOWED_HOSTS set to that "
+                "name (comma separated for several, * for any).\n"
+            ).encode()
             self.send_response(403)
-            self.send_header("Content-Length", "0")
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
+            self.wfile.write(body)
             return False
 
         def _send(self, body: bytes, ctype: str) -> None:
@@ -123,6 +203,9 @@ def serve_dashboard(log: ProgressLog, port: int) -> None:
             self.wfile.write(body)
 
         def do_GET(self) -> None:  # noqa: N802
+            if self.path == "/healthz":
+                self._send(b"ok\n", "text/plain; charset=utf-8")
+                return
             if not self._host_ok():
                 return
             if self.path == "/":
@@ -167,6 +250,16 @@ def serve_dashboard(log: ProgressLog, port: int) -> None:
                 from aircraft_mcp.viewer import index_html
 
                 self._send(index_html(runs_dir()).encode(), "text/html; charset=utf-8")
+            elif self.path == "/sessions/download.zip":
+                body = records_zip(runs_dir())
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header(
+                    "Content-Disposition", 'attachment; filename="aircraft-session-records.zip"'
+                )
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
             elif (m := _SESSION.match(self.path)) is not None:
                 self._session_file(m.group(1), m.group(2))
             else:
@@ -197,4 +290,4 @@ def serve_dashboard(log: ProgressLog, port: int) -> None:
             )
             self._send(target.read_bytes(), ctype)
 
-    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    ThreadingHTTPServer((listen, port), Handler).serve_forever()

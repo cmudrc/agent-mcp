@@ -29,6 +29,19 @@ def main() -> int:
         "reports at /sessions) on this port.",
     )
     p.add_argument(
+        "--dashboard-host",
+        default=None,
+        help="Address the progress page listens on (default 127.0.0.1, this "
+        "machine only; 0.0.0.0 inside a container). Also AIRCRAFT_DASHBOARD_HOST.",
+    )
+    p.add_argument(
+        "--dashboard-allowed-hosts",
+        default=None,
+        help="Comma-separated host names the progress page answers to besides "
+        "localhost, for example the name of a route in front of it; * for any. "
+        "Also AIRCRAFT_DASHBOARD_ALLOWED_HOSTS. The page has no login.",
+    )
+    p.add_argument(
         "--skip",
         default="",
         help="Comma-separated server prefixes to skip (e.g. aviary).",
@@ -71,14 +84,18 @@ def main() -> int:
         # A second gateway on the same machine (two Kiro chats side by side,
         # 2026-10-14) used to lose its page because the port was taken; it
         # now takes the next free one and says which.
-        port = free_port(int(args.dashboard_port))
+        port = free_port(int(args.dashboard_port), host=args.dashboard_host)
         if port is None:
             print(f"progress page: ports {args.dashboard_port} to {args.dashboard_port + 10} are busy; no page", file=sys.stderr)
         else:
             os.environ["AIRCRAFT_DASHBOARD_URL"] = f"http://127.0.0.1:{port}"
             if port != int(args.dashboard_port):
                 print(f"progress page: port {args.dashboard_port} is busy, using http://127.0.0.1:{port}", file=sys.stderr)
-            t = threading.Thread(target=serve_dashboard, args=(log, port), daemon=True)
+            t = threading.Thread(
+                target=serve_dashboard,
+                args=(log, port, args.dashboard_host, args.dashboard_allowed_hosts),
+                daemon=True,
+            )
             t.start()
 
     if args.transport == "stdio":

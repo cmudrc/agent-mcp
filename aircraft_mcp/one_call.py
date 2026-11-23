@@ -20,7 +20,10 @@ raw session tools already use them on the gateway:
 
 from __future__ import annotations
 
+import contextlib
+import functools
 import hashlib
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
@@ -46,6 +49,26 @@ def _agent_module() -> Any:
     return gemma_agent
 
 
+def _prints_to_stderr(handler: Any) -> Any:
+    """``handler`` with anything it prints sent to stderr.
+
+    The handlers are the terminal agent's, and some print progress lines
+    ("Meshing STEP ...", "Running SU2_CFD ..."). On a gateway started over
+    stdio, standard output is the MCP channel, so such a line reached the
+    client as a broken protocol message (seen 2026-11-23 in the container,
+    where output is unbuffered: the client logged a parse failure for each
+    line and carried on). The protocol writer holds its own handle on the
+    real standard output, so redirecting during the call does not touch it.
+    """
+
+    @functools.wraps(handler)
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        with contextlib.redirect_stdout(sys.stderr):
+            return handler(*args, **kwargs)
+
+    return wrapped
+
+
 def register(gw: Any) -> list[str]:
     """Add the installed one-call tools and compare_cpacs_files to ``gw``.
 
@@ -62,7 +85,7 @@ def register(gw: Any) -> list[str]:
         description = spec["schema"]["function"]["description"]
         if gw_name != local_name:
             description += f" (The local agent calls this tool {local_name}.)"
-        gw.tool(spec["handler"], name=gw_name, description=description)
+        gw.tool(_prints_to_stderr(spec["handler"]), name=gw_name, description=description)
         added.append(gw_name)
     gw.tool(compare_cpacs_files)
     added.append("compare_cpacs_files")

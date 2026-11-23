@@ -516,3 +516,37 @@ def test_resolve_finds_a_server_beside_the_interpreter_without_path(monkeypatch,
     monkeypatch.setenv("PATH", str(tmp_path / "nowhere"))
     assert server._resolve("tigl-mcp") == str(fake)
     assert server._resolve("no-such-server") is None
+
+
+def test_one_call_tool_progress_text_goes_to_stderr_not_stdout(tmp_path, capsys):
+    """On a gateway started over stdio, standard output is the MCP channel. A
+    handler that prints a progress line (the CFD adapter does) must not write
+    it there. The solver is replaced by a stand-in that prints."""
+    import gemma_agent as g
+
+    def stand_in(cpacs_path: str, mach: float | None = None) -> dict:
+        print("      Meshing STEP ...")
+        return {"CL": 0.1}
+
+    schema = g.TOOLS["su2_run_aero"]["schema"]
+    real = g.TOOLS["su2_run_aero"]
+    g.tool("su2_run_aero", schema)(stand_in)
+    try:
+        gw, _, _ = build_gateway(state_dir=tmp_path, skip={p for p, _ in SERVERS})
+
+        async def check():
+            async with Client(gw) as c:
+                props = (
+                    {t.name: t for t in await c.list_tools()}["su2_run_aero"].inputSchema["properties"]
+                )
+                assert {"cpacs_path", "mach"} <= set(props)  # the wrapper keeps the inputs
+                capsys.readouterr()
+                r = await c.call_tool("su2_run_aero", {"cpacs_path": str(tmp_path / "a.xml")}, raise_on_error=False)
+                assert r.data == {"CL": 0.1}
+
+        asyncio.run(check())
+    finally:
+        g.TOOLS["su2_run_aero"] = real
+    out = capsys.readouterr()
+    assert "Meshing STEP" not in out.out
+    assert "Meshing STEP" in out.err

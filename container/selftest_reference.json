@@ -1,0 +1,54 @@
+{
+ "recorded": "our run of 23 November 2026: this image on an Apple laptop, x86-64 emulated by Rosetta",
+ "note": "Real results of container/selftest.py, copied from its result file; nothing is typed in by hand. The test conditions are not the study's, so none of these is an answer to a study task.",
+ "steps": {
+  "gateway starts": {
+   "tools": 67
+  },
+  "SU2 found": {
+   "installed": true
+  },
+  "the two study files": {
+   "file_A": "52ac93b3e4a5",
+   "stored_runs_A": 13,
+   "file_B": "27cbb3d193aa",
+   "stored_runs_B": 13
+  },
+  "stored-run lookup": {
+   "aoa_deg": 7.5,
+   "CL": 0.8834644732500001,
+   "CD": 0.1552862632
+  },
+  "geometry export (TiGL)": {
+   "wings": 3,
+   "fuselages": 1,
+   "span_m": 33.92715933745127,
+   "step_file": true,
+   "kernel": "native_tigl_closed_solids"
+  },
+  "engine (pyCycle)": {
+   "thrust_N": 59999.99,
+   "fuel_flow_kg_s": 1.057233,
+   "OPR": 30.55
+  },
+  "mission (NSEG)": {
+   "fuel_burned_kg": 6439.458214187192,
+   "distance_nm": 760.7473624844112
+  },
+  "CFD quick mesh (gmsh, SU2)": {
+   "cells": 50367,
+   "CL": 0.09263420633,
+   "CD": 0.02373348181,
+   "solver_converged": false
+  },
+  "flow picture": {
+   "png_bytes": 248342,
+   "surface_cells": 2906
+  },
+  "Aviary runs (its benchmark)": {
+   "converged": true,
+   "iterations": 27,
+   "fuel_burned_kg": 7309.722039345946
+  }
+ }
+}

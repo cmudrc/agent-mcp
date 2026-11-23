@@ -262,6 +262,12 @@ gateway with the local model over real MCP, the way an external client
 would, use `mcp_agent.py` (a test harness: 0 of 5 runs completed on the
 raw tool surface, 2026-10-02).
 
+**In a container.** [`container/`](container/README.md) builds the gateway,
+the five servers and their solvers into one image on Red Hat's
+`ubi9-minimal` base, served over HTTP with the status page, for platforms
+such as OpenShift. First version, 23 November 2026: built and tested on a
+laptop only.
+
 ## How to use the five MCPs with the Gemma agent
 
 Every MCP exposes its solver as a single OpenAI-shaped function spec
