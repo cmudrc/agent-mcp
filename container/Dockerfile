@@ -49,13 +49,23 @@ RUN microdnf install -y --nodocs --setopt=install_weak_deps=0 \
 # 2. Python 3.12 with DLR's geometry kernel (TiGL, TiXI, OpenCASCADE
 #    bindings). DLR publishes these as conda packages only. The lock file
 #    lists the exact package files, so nothing is solved at build time.
+#    The install is tried up to three times: it failed once for us on a
+#    download or unpacking error (2026-11-23), and every package is checked
+#    against the checksum in the lock file, so a second try cannot install
+#    anything else.
 COPY container/conda-linux-64.lock /opt/aircraft/container/conda-linux-64.lock
 RUN cd /tmp \
     && curl -fsSL -o micromamba.tar.bz2 "https://micro.mamba.pm/api/micromamba/linux-64/${MICROMAMBA_VERSION}" \
     && echo "${MICROMAMBA_SHA256}  micromamba.tar.bz2" | sha256sum -c - \
     && tar -xjf micromamba.tar.bz2 bin/micromamba \
-    && MAMBA_ROOT_PREFIX=/tmp/mamba bin/micromamba create -y -p /opt/aircraft/env \
-        -f /opt/aircraft/container/conda-linux-64.lock \
+    && ok=0 \
+    && for attempt in 1 2 3; do \
+           if MAMBA_ROOT_PREFIX=/tmp/mamba bin/micromamba create -y -p /opt/aircraft/env \
+                  -f /opt/aircraft/container/conda-linux-64.lock; then ok=1; break; fi; \
+           echo "micromamba attempt ${attempt} failed; starting again from nothing"; \
+           rm -rf /tmp/mamba /opt/aircraft/env; \
+       done \
+    && [ "${ok}" = 1 ] \
     && rm -rf /tmp/mamba /tmp/bin /tmp/micromamba.tar.bz2 \
     && /opt/aircraft/env/bin/python -c "import tigl3.tigl3wrapper, tixi3.tixi3wrapper; from OCC.Core.STEPControl import STEPControl_Writer"
 
