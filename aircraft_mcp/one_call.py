@@ -26,7 +26,9 @@ import contextlib
 import functools
 import hashlib
 import queue
+import signal
 import sys
+import threading
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
@@ -52,6 +54,40 @@ def _agent_module() -> Any:
     return gemma_agent
 
 
+@contextlib.contextmanager
+def _signal_handlers_kept() -> Any:
+    """Put this process's SIGINT and SIGTERM handlers back after the call.
+
+    The mesher (gmsh) leaves both at the default action once it has run in
+    this process. Seen 2026-11-23 in the container: after one CFD call the
+    gateway no longer caught SIGTERM, and because it is process 1 there, the
+    kernel then ignored the signal; the container sat out its grace period
+    and was killed, with no end written to the session log. On a laptop the
+    same loss means a stop request ends the gateway without closing the log.
+    Handlers can only be set from the main thread, which is where the
+    handlers run (the event loop's thread on a stdio gateway, the executor's
+    over HTTP).
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    saved = {}
+    for name in ("SIGINT", "SIGTERM"):
+        sig = getattr(signal, name, None)
+        if sig is not None:
+            saved[sig] = signal.getsignal(sig)
+    try:
+        yield
+    finally:
+        for sig, previous in saved.items():
+            if previous is None:  # set from C, not ours to put back
+                continue
+            try:
+                signal.signal(sig, previous)
+            except (ValueError, OSError):
+                pass
+
+
 def _prints_to_stderr(handler: Any) -> Any:
     """``handler`` with anything it prints sent to stderr.
 
@@ -66,7 +102,7 @@ def _prints_to_stderr(handler: Any) -> Any:
 
     @functools.wraps(handler)
     def wrapped(*args: Any, **kwargs: Any) -> Any:
-        with contextlib.redirect_stdout(sys.stderr):
+        with contextlib.redirect_stdout(sys.stderr), _signal_handlers_kept():
             return handler(*args, **kwargs)
 
     return wrapped

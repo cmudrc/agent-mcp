@@ -49,7 +49,7 @@ jobs:
         run: |
           docker run --rm --network none --user 1234567:0 --cap-drop=ALL \
             aircraft-tools selftest | tee selftest_docker_no_network.txt
-      - name: One solver call through the web address, a second request during it
+      - name: Solver calls through the web address, a second request during one
         run: |
           docker exec -i tools python - <<'EOF'
           import asyncio, time
@@ -73,6 +73,16 @@ jobs:
                         f"status answered in {waited:.2f} s, engine call still running: {busy}")
                   assert abs(d["fuel_flow_kg_s"] - 1.05723) < 1e-4, d
                   assert busy and waited < 2.0
+                  # A CFD run on this gateway, before the stop check below: the
+                  # mesher resets the stop signal, and the gateway must put its
+                  # handler back.
+                  path = {"cpacs_path": ARGS["cpacs_path"]}
+                  await a.call_tool("tigl_export_geometry", path, raise_on_error=False)
+                  r = await a.call_tool("su2_run_aero", {**path, "mach": 0.78, "aoa": 2.0, "altitude_ft": 35000, "preset": "laptop"}, raise_on_error=False)
+                  d = r.structured_content if r.structured_content is not None else r.data
+                  d = d.get("result", d)
+                  print(f"CFD quick mesh over the web address: {d['mesh_n_elem']} cells, CL {d['CL']:.6g}")
+                  assert d["mesh_n_elem"] == 50367, d
 
           asyncio.run(main())
           EOF

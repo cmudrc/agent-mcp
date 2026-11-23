@@ -153,7 +153,8 @@ We have not been able to test this part. What we built for it:
 - Everything is written group-writable, so a container that comes up with
   a different user id can keep using a volume an earlier one wrote to.
 - On SIGTERM it writes the end of its session log and exits within a few
-  seconds, also in the middle of a tool call.
+  seconds, also after CFD runs (the mesher resets the signal; the gateway
+  puts its handler back after each tool call).
 
 Behind a route:
 

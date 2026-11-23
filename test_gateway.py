@@ -696,3 +696,51 @@ def test_hand_off_names_the_missing_local_model(monkeypatch, tmp_path):
     out = local_agent.run_local_agent("x", str(tmp_path / "a.xml"))
     assert out["error"]["type"] == "agent_incomplete"
     assert "something else" in out["stderr_tail"]
+
+
+def test_one_call_tool_puts_back_the_stop_signal_handler_a_solver_library_removed(tmp_path):
+    """The mesher resets SIGTERM to the default action when it runs, behind
+    Python's back. In the container the gateway is process 1, which the
+    kernel does not stop on a default-action signal, so after one CFD call it
+    could no longer be stopped (2026-11-23). The stand-in does what the
+    mesher does; afterwards the process must catch SIGTERM again."""
+    import ctypes
+    import signal
+
+    import pytest
+
+    if not hasattr(signal, "SIGTERM") or sys.platform == "win32":
+        pytest.skip("POSIX signals only")
+    import gemma_agent as g
+
+    libc = ctypes.CDLL(None)
+    libc.signal.restype = ctypes.c_void_p
+    libc.signal.argtypes = [ctypes.c_int, ctypes.c_void_p]
+
+    def c_level_handler() -> int | None:
+        current = libc.signal(signal.SIGTERM, None)  # reading it swaps in the default,
+        libc.signal(signal.SIGTERM, current)         # so put it straight back
+        return current
+
+    def stand_in(cpacs_path: str, mach: float | None = None) -> dict:
+        libc.signal(signal.SIGTERM, None)  # as the mesher does: default action, set from C
+        return {"CL": 0.1}
+
+    schema = g.TOOLS["su2_run_aero"]["schema"]
+    real = g.TOOLS["su2_run_aero"]
+    g.tool("su2_run_aero", schema)(stand_in)
+    before = signal.signal(signal.SIGTERM, lambda signum, frame: None)
+    try:
+        assert c_level_handler() not in (None, 0)
+        gw, _, _ = build_gateway(state_dir=tmp_path, skip={p for p, _ in SERVERS})
+
+        async def check():
+            async with Client(gw) as c:
+                r = await c.call_tool("su2_run_aero", {"cpacs_path": str(tmp_path / "a.xml")}, raise_on_error=False)
+                assert r.data == {"CL": 0.1}
+
+        asyncio.run(check())
+        assert c_level_handler() not in (None, 0), "SIGTERM was left at the default action"
+    finally:
+        g.TOOLS["su2_run_aero"] = real
+        signal.signal(signal.SIGTERM, before)
