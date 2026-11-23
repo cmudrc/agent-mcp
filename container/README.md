@@ -27,8 +27,10 @@ cd agent-mcp
 docker build --platform linux/amd64 -f container/Dockerfile --build-arg AGENT_MCP_COMMIT=$(git rev-parse HEAD) -t aircraft-tools .
 ```
 
-The Dockerfile uses plain syntax only, so `podman build` with the same
-arguments should work; we have only built it with docker. The base image
+The Dockerfile uses plain syntax only. `podman build` with the same
+arguments works: the job in `.github/workflows/container.yml` builds the
+image with docker 28 and with podman 4.9 (rootless) on an x86-64 machine
+and runs the self-test in both. The base image
 is named in full, `docker.io/redhat/ubi9-minimal`, because podman does not
 guess the registry of a short name. Red Hat's own registry has the same
 image as `registry.access.redhat.com/ubi9/ubi-minimal`. To start from an
@@ -50,8 +52,8 @@ the Dockerfile. If the build machine cannot reach these places, tell us; we
 can send the built image as a file instead.
 
 The build took us about 3 minutes with a fast connection (it is almost all
-downloads). The image is about 1.2 GB compressed; docker reports 5.5 GB on
-disk.
+downloads). The image is about 1.2 GB compressed and 4.0 GB unpacked
+(Docker Desktop on a Mac reports 5.5 GB for the same image).
 
 ## Run
 
@@ -112,11 +114,12 @@ to a study task: the test uses its own angle, engine thrust, mass and
 range, the CFD case is a coarse mesh that is not converged, and the Aviary
 line is Aviary's own benchmark aircraft.
 
-We recorded our numbers on an Apple laptop, which runs this image through
-x86-64 emulation. We have not run it on a real x86-64 machine yet. The
+We recorded these numbers on an Apple laptop, which runs the image through
+x86-64 emulation, and got the same numbers, every one, on a real x86-64
+machine (an Intel Xeon build machine, with docker and with podman). The
 file checks and the stored-run lookup must be exactly the same everywhere.
-For the solver steps, a difference in the last digits is not a problem; a
-different CFD cell count is worth telling us.
+For the solver steps, a difference in the last digits on other hardware is
+not a problem; a different CFD cell count is worth telling us.
 
 ## On OpenShift
 
@@ -145,6 +148,10 @@ We have not been able to test this part. What we built for it:
   `--cap-drop=ALL --security-opt=no-new-privileges`.
 - A user id that is not in group 0 cannot write to `/data`; the container
   then stops at start-up and says so.
+- Everything is written group-writable, so a container that comes up with
+  a different user id can keep using a volume an earlier one wrote to.
+- On SIGTERM it writes the end of its session log and exits within a few
+  seconds, also in the middle of a tool call.
 
 Behind a route:
 

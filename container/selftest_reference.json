@@ -1,5 +1,5 @@
 {
- "recorded": "our run of 23 November 2026: this image on an Apple laptop, x86-64 emulated by Rosetta",
+ "recorded": "our runs of 23 November 2026: an Apple laptop (x86-64 emulated by Rosetta) and an Intel Xeon build machine (real x86-64) gave the same numbers",
  "note": "Real results of container/selftest.py, copied from its result file; nothing is typed in by hand. The test conditions are not the study's, so none of these is an answer to a study task.",
  "steps": {
   "gateway starts": {

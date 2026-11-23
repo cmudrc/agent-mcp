@@ -49,6 +49,55 @@ jobs:
         run: |
           docker run --rm --network none --user 1234567:0 --cap-drop=ALL \
             aircraft-tools selftest | tee selftest_docker_no_network.txt
+      - name: One solver call through the web address, a second request during it
+        run: |
+          docker exec -i tools python - <<'EOF'
+          import asyncio, time
+          from fastmcp import Client
+
+          URL = "http://127.0.0.1:8800/mcp"
+          ARGS = {"cpacs_path": "/data/study/aircraft_A.xml", "mach": 0.78, "altitude_ft": 35000.0, "design_thrust_n": 60000.0}
+
+          async def main():
+              async with Client(URL, timeout=600) as a, Client(URL, timeout=600) as b:
+                  t0 = time.time()
+                  run = asyncio.create_task(a.call_tool("pycycle_run_engine", ARGS, raise_on_error=False))
+                  await asyncio.sleep(0.5)
+                  t1 = time.time()
+                  await b.call_tool("gateway_status", {})
+                  waited, busy = time.time() - t1, not run.done()
+                  r = await run
+                  d = r.structured_content if r.structured_content is not None else r.data
+                  d = d.get("result", d)
+                  print(f"engine call {time.time() - t0:.1f} s, fuel flow {d['fuel_flow_kg_s']:.5f} kg/s; "
+                        f"status answered in {waited:.2f} s, engine call still running: {busy}")
+                  assert abs(d["fuel_flow_kg_s"] - 1.05723) < 1e-4, d
+                  assert busy and waited < 2.0
+
+          asyncio.run(main())
+          EOF
+      - name: A second user id can use the volume the first one wrote to
+        run: |
+          cat > two_users.py <<'EOF'
+          import asyncio, os
+          from fastmcp import Client
+          from fastmcp.client.transports import StdioTransport
+
+          ARGS = {"cpacs_path": "/data/study/aircraft_A.xml", "mach": 0.78, "altitude_ft": 35000.0, "design_thrust_n": 60000.0}
+
+          async def main():
+              async with Client(StdioTransport("aircraft-mcp", [], env=dict(os.environ), keep_alive=False), timeout=600) as c:
+                  r = await c.call_tool("pycycle_run_engine", ARGS, raise_on_error=False)
+                  d = r.structured_content if r.structured_content is not None else r.data
+                  d = d.get("result", d)
+                  assert "error" not in d, d
+                  print(f"user id {os.getuid()}: engine ran, result written into {ARGS['cpacs_path']}")
+
+          asyncio.run(main())
+          EOF
+          docker volume create shared
+          docker run --rm -i --user 1111111:0 --cap-drop=ALL -v shared:/data aircraft-tools python - < two_users.py
+          docker run --rm -i --user 2222222:0 --cap-drop=ALL -v shared:/data aircraft-tools python - < two_users.py
       - name: Versions, start-up log, size
         if: always()
         run: |
@@ -56,6 +105,17 @@ jobs:
           docker logs tools 2>&1 | tail -60 || true
           docker image inspect aircraft-tools --format 'image size {{.Size}} bytes' || true
           docker cp tools:/data/selftest selftest_docker || true
+      - name: Stops cleanly and records the end of its session
+        run: |
+          t0=$(date +%s); docker stop -t 20 tools; t1=$(date +%s)
+          code=$(docker inspect tools --format '{{.State.ExitCode}}')
+          echo "stopped in $((t1 - t0)) s, exit code $code"
+          test "$code" = "0"
+          docker cp tools:/data/aircraft-runs runs
+          for f in runs/*/events.jsonl; do
+            grep -q '"session_end"' "$f" || { echo "no session end in $f"; exit 1; }
+          done
+          echo "$(ls runs | wc -l) session logs, each with its end recorded"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

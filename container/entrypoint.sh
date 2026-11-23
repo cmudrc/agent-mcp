@@ -8,6 +8,12 @@
 #   anything else is run as a command (for example: bash)
 set -euo pipefail
 
+# Everything written is group-writable. A platform that gives the container
+# an arbitrary user id keeps it in group 0, so a later container with a
+# different user id can still use a volume an earlier one wrote to (seen
+# 2026-11-23: without this the second one could not write the aircraft file).
+umask 0002
+
 DATA="${AIRCRAFT_DATA_DIR:-/data}"
 FILES="${AIRCRAFT_STUDY_FILES:-/opt/aircraft/agent-mcp/kiro/study/files}"
 
@@ -21,11 +27,20 @@ prepare() {
         say "Mount a volume there that this user or group 0 can write, or set AIRCRAFT_DATA_DIR."
         exit 1
     fi
+    # Font and plot caches, one folder per user id, so a container with a
+    # different user id on the same volume does not trip over the last one's.
+    cache="$DATA/.cache/$(id -u)"
+    if ! mkdir -p "$cache" 2>/dev/null; then
+        cache="/tmp/aircraft-cache-$(id -u)"
+        mkdir -p "$cache"
+    fi
+    export XDG_CACHE_HOME="$cache" MPLCONFIGDIR="$cache/matplotlib"
     # Working copies of the two study aircraft. The tools write their results
     # into the file they are given, so the originals stay in the image.
     for f in aircraft_A.xml aircraft_B.xml; do
         if [ ! -f "$DATA/study/$f" ]; then
             cp "$FILES/$f" "$DATA/study/$f"
+            chmod g+rw "$DATA/study/$f" 2>/dev/null || true
             say "working copy: $DATA/study/$f"
         fi
     done
@@ -58,6 +73,7 @@ case "$cmd" in
         mkdir -p "$DATA/study"
         for f in aircraft_A.xml aircraft_B.xml; do
             cp "$FILES/$f" "$DATA/study/$f"
+            chmod g+rw "$DATA/study/$f" 2>/dev/null || true
             say "fresh copy: $DATA/study/$f"
         done
         ;;

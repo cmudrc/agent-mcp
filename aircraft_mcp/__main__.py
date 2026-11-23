@@ -82,6 +82,16 @@ def main() -> int:
         try:
             _close_session()
         finally:
+            if executor is not None:
+                # Served over HTTP the web server runs on another thread and
+                # takes no signals, and in a container this process is
+                # process 1, which the kernel does not stop on a signal left
+                # at its default action (seen 2026-11-23: the container sat
+                # out the grace period and was killed). The session log is
+                # closed above; leave now, also in the middle of a tool call.
+                sys.stdout.flush()
+                sys.stderr.flush()
+                os._exit(0)
             signal.signal(signal.SIGTERM, signal.SIG_DFL)
             os.kill(os.getpid(), signal.SIGTERM)
 
