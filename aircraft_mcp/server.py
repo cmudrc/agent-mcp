@@ -16,6 +16,10 @@ tools, the flow-file tools) and compare_cpacs_files (aircraft_mcp.one_call);
 it allocates its session id before starting the servers and passes it to
 them, so every CPACS header entry they write names the session; and it works
 on one aircraft file per session (aircraft_mcp.run_files).
+
+Since 2026-11-23 a mounted server that stops is noticed and started again,
+and the call that met it gets a structured ``server_stopped`` error
+(aircraft_mcp.supervisor).
 """
 
 from __future__ import annotations
@@ -28,12 +32,14 @@ from typing import Any
 
 from fastmcp import FastMCP
 from fastmcp.client.transports import StdioTransport
+from fastmcp.server.proxy import ProxyClient
 
 from aircraft_mcp import one_call, run_files
 from aircraft_mcp.local_agent import run_local_agent
 from aircraft_mcp.middleware import StageMiddleware
 from aircraft_mcp.progress import TYPICAL_SECONDS, ProgressLog
 from aircraft_mcp.runlog import RunLog, logging_enabled, new_session_id
+from aircraft_mcp.supervisor import ServerWatch
 
 SERVERS: tuple[tuple[str, str], ...] = (
     ("tigl", "tigl-mcp"),
@@ -90,7 +96,8 @@ def build_gateway(
     """Build the gateway. Returns (server, progress log, skipped-server list).
 
     The stage middleware is also reachable as ``server.stage_middleware``;
-    its ``runlog`` is the gateway's session log.
+    its ``runlog`` is the gateway's session log. ``server.server_watch`` knows
+    which mounted servers are running (aircraft_mcp.supervisor).
     """
     import os
 
@@ -128,6 +135,7 @@ def build_gateway(
 
     skipped: list[str] = []
     mounted: list[str] = []
+    watch = ServerWatch()
     for prefix, command in SERVERS:
         if skip and prefix in skip:
             skipped.append(f"{prefix} (skipped by flag)")
@@ -136,8 +144,15 @@ def build_gateway(
         if exe is None:
             skipped.append(f"{prefix} ({command} not installed)")
             continue
-        proxy = FastMCP.as_proxy(StdioTransport(exe, [], env=dict(server_env)))
-        gw.mount(proxy, prefix=prefix)
+
+        def new_transport(exe: str = exe) -> StdioTransport:
+            return StdioTransport(exe, [], env=dict(server_env))
+
+        # The proxy makes a client per call from this one, so the watch can
+        # give it a new connection when the server's process has stopped.
+        client = ProxyClient(new_transport())
+        gw.mount(FastMCP.as_proxy(client), prefix=prefix)
+        watch.add(prefix, command, client, new_transport)
         mounted.append(prefix)
 
     if runlog_factory is None:
@@ -150,17 +165,22 @@ def build_gateway(
             )
 
     one_call_tools = one_call.register(gw)
-    middleware = StageMiddleware(log, runlog_factory)
+    watch.native = set(one_call_tools)
+    middleware = StageMiddleware(log, runlog_factory, watch=watch)
     gw.add_middleware(middleware)
     gw.stage_middleware = middleware  # type: ignore[attr-defined]
+    gw.server_watch = watch  # type: ignore[attr-defined]
 
     @gw.tool
-    def gateway_status() -> dict[str, Any]:
-        """Which servers are mounted, which were skipped, where progress
-        events are written, and the gateway's session log folder."""
+    async def gateway_status() -> dict[str, Any]:
+        """Which servers are mounted and whether each is running (checked now;
+        one found stopped is started again, and "servers" says how often each
+        stopped and when), which were skipped, where progress events are
+        written, and the gateway's session log folder."""
         rl = middleware.runlog
         return {
             "mounted": list(mounted),
+            "servers": await watch.check_all(),
             "skipped": skipped,
             "one_call_tools": list(one_call_tools),
             "events_jsonl": str(log.events_path),

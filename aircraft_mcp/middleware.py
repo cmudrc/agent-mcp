@@ -6,7 +6,11 @@ Before a call runs, the aircraft file it would work on is checked (2026-10-08):
 a restricted-dataset file name is refused, and so is a second aircraft file in
 the same session (aircraft_mcp.run_files), for the raw tools as well as the
 one-call tools. A refused call is logged like any other and never reaches the
-server."""
+server.
+
+A call to a mounted server that raises because the server's process has
+stopped returns a structured ``server_stopped`` error instead, and the server
+is started again (2026-11-23, aircraft_mcp.supervisor)."""
 
 from __future__ import annotations
 
@@ -25,6 +29,7 @@ from mcp.types import TextContent
 from aircraft_mcp import restricted, run_files
 from aircraft_mcp.progress import ProgressLog
 from aircraft_mcp.runlog import RunLog, to_jsonable
+from aircraft_mcp.supervisor import ServerWatch
 
 
 def result_payload(result: Any) -> Any:
@@ -85,8 +90,10 @@ class StageMiddleware(Middleware):
         self,
         log: ProgressLog,
         runlog_factory: Callable[[], RunLog] | None = None,
+        watch: ServerWatch | None = None,
     ) -> None:
         self.log = log
+        self.watch = watch
         self._factory = runlog_factory or (lambda: RunLog.start("gateway"))
         self._runlog: RunLog | None = None
         self._lock = threading.Lock()
@@ -117,9 +124,22 @@ class StageMiddleware(Middleware):
                 content=[TextContent(type="text", text=json.dumps(refused))],
                 structured_content=refused,
             )
+        token = self.watch.begin(tool) if self.watch is not None else None
         try:
             result = await call_next(context)
         except Exception as exc:
+            stopped = (
+                await self.watch.failed(token, tool, exc)
+                if self.watch is not None and token is not None
+                else None
+            )
+            if stopped is not None:
+                self.log.end(call_id, tool, ok=False, error=stopped["error"]["type"])
+                rl.tool_result(tool, stopped, call_id=call_id, duration_s=time.time() - t0, ok=False)
+                return ToolResult(
+                    content=[TextContent(type="text", text=json.dumps(stopped))],
+                    structured_content=stopped,
+                )
             err = f"{type(exc).__name__}: {exc}"
             self.log.end(call_id, tool, ok=False, error=err)
             rl.tool_result(
@@ -131,6 +151,8 @@ class StageMiddleware(Middleware):
                 raised=True,
             )
             raise
+        if self.watch is not None and token is not None:
+            self.watch.succeeded(token)
         payload = result_payload(result)
         is_err = bool(getattr(result, "isError", False)) or _reports_error(payload)
         self.log.end(call_id, tool, ok=not is_err)

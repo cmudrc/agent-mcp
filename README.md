@@ -227,9 +227,16 @@ is reported by `gateway_status`, never faked. The servers get the gateway's
 `PATH`, which must contain `~/.local/su2/bin` and `docker`: started with the
 bare system `PATH`, the gateway reported SU2 as not installed (fresh clone,
 2026-10-05). An IDE's MCP configuration should therefore set `PATH`.
+If a server's process stops, the call that met it returns a structured
+`server_stopped` error and the gateway starts the server again at once; the
+gateway itself does not need a restart, but session ids the old process
+gave out are gone. A stop is found when one of that server's tools is
+called or `gateway_status` is asked (`aircraft_mcp/supervisor.py`).
 Gateway-native tools:
 
-- `gateway_status`: what is mounted, what was skipped, where events go.
+- `gateway_status`: what is mounted, what was skipped, where events go, and
+  under `servers` whether each mounted server is running (checked when
+  asked), how often it stopped and the last stop.
 - `get_progress`: recent tool calls (stage, status, duration).
 - `run_aircraft_analysis`: hand a whole analysis to the local Gemma
   planner (`hybrid_agent.py`); returns its final report, the artifact

@@ -115,7 +115,13 @@ def main() -> int:
                 print(f"progress page: port {args.dashboard_port} is busy, using http://127.0.0.1:{port}", file=sys.stderr)
             t = threading.Thread(
                 target=serve_dashboard,
-                args=(log, port, args.dashboard_host, args.dashboard_allowed_hosts),
+                args=(
+                    log,
+                    port,
+                    args.dashboard_host,
+                    args.dashboard_allowed_hosts,
+                    gw.server_watch.problems,  # type: ignore[attr-defined]
+                ),
                 daemon=True,
             )
             t.start()

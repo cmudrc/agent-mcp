@@ -16,7 +16,9 @@ it answers to, for example the name of the route in front of it; ``*``
 answers to any name. The page has no login: whoever can reach the port can
 read the session logs. ``/healthz`` answers "ok" to any caller, for a
 platform's liveness check, and ``/sessions/download.zip`` is every session
-folder in one file.
+folder in one file. While a mounted server is down (it stopped and the
+gateway could not start it again, see aircraft_mcp.supervisor), ``/healthz``
+answers 503 and names it.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ import re
 import socket
 import time
 import zipfile
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -165,6 +168,7 @@ def serve_dashboard(
     port: int,
     host: str | None = None,
     allowed_hosts: str | None = None,
+    problems: Callable[[], list[str]] | None = None,
 ) -> None:
     # Only this machine's own names for the server, unless more are named. A
     # web page on another site that rebinds its DNS name to this address
@@ -204,6 +208,18 @@ def serve_dashboard(
 
         def do_GET(self) -> None:  # noqa: N802
             if self.path == "/healthz":
+                # ``problems`` lists mounted servers that are down; the
+                # gateway learns of a stop when one of that server's tools is
+                # called or gateway_status is asked.
+                down = problems() if problems is not None else []
+                if down:
+                    body = ("unhealthy\n" + "\n".join(down) + "\n").encode()
+                    self.send_response(503)
+                    self.send_header("Content-Type", "text/plain; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
                 self._send(b"ok\n", "text/plain; charset=utf-8")
                 return
             if not self._host_ok():

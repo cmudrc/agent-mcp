@@ -136,7 +136,10 @@ We have not been able to test this part. What we built for it:
   are lost when the container stops. Use the download link on the status
   page before stopping it, or mount a volume at `/data`.
 - Ports: 8800 (the tools, path `/mcp`) and 8765 (the status page).
-- Health check: `GET /healthz` on port 8765 answers `ok`.
+- Health check: `GET /healthz` on port 8765 answers `ok`. It answers 503
+  and names the server while a solver server has stopped and could not be
+  started again. A server that stops is normally started again at once and
+  the check stays `ok`; `gateway_status` lists how often each one stopped.
 - Memory: the container uses about 90 MB idle and peaked at about 1.5 GB
   during the self-test. The self-test passes with a 2 GB limit and one CPU.
   With 1 GB the kernel stops the gateway in the CFD step (the self-test
